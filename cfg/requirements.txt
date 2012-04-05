@@ -1,3 +1,8 @@
 testify
 pep8
 pyflakes
+boto==2.2.1
+-e /Users/rhettg/Projects/asyncdynamo
+ipython
+pyzmq
+simplejson

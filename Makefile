@@ -1,6 +1,7 @@
 .PHONY: all pep8 pyflakes clean dev
 
 GITIGNORES=$(shell cat .gitignore |tr "\\n" ",")
+PYTHON=python
 
 all: pep8
 
@@ -13,7 +14,7 @@ pyflakes: env
 dev: env env/.pip
 
 env:
-	virtualenv --distribute env
+	virtualenv -p $(PYTHON) --distribute env
 
 env/.pip: env cfg/requirements.txt
 	bin/virtual-env-exec pip install -r cfg/requirements.txt

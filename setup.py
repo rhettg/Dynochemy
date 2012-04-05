@@ -5,8 +5,7 @@ import os
 import sys
 from distutils.core import setup
 
-PACKAGES = ['bootstrap']
-
+PACKAGES = ['dynochemy']
 
 def get_init_val(val, packages=PACKAGES):
     pkg_init = "%s/__init__.py" % PACKAGES[0]
