@@ -1,45 +1,61 @@
-py-boostrap: Python Package Bootstrap Project
+dynochemy: Clever pythonic and async interface to Amazon DynamoDB
 =========================
 
-Python Package Bootstrap Project is an example boilerplate for creating
-distributable Python packages.
-
-There are lots of information detailing how to create a Python package
-but few examples that are comprehensive. The goal of this project is to
-provide Python developers with a boilerplate project they can use as a
-guide and example.
+Yet another python inteface for Amazon Dynamo. The API is somewhat inspired by SQLAlchemy.
 
 
 Features
 --------
 
-- Example package and module layout
-- Example testing integration and layout using testify
-- Example `setup.py` using distutils
-- Example `Makefile` for quick development setup using virtualenv and pip
+- Synchronous and Async Support (using Tornado)
+- Full API abstraction (rather than needing to know internals of how Dynamo actually needs it's JSON formatted.
 
+Status
+------
+Under heavy development, just barely functioning. You can get and put things to the db in both sync and async modes.
 
-Use
+Really just useful for seeing how the API would work if this library was completed
+
+Example Use
 ---
 
-To create a new project derived from the boilerplate: ::
+Connect to your database:
 
-    ~/Projects $ git clone https://github.com/splaice/py-bootstrap.git
-    ~/Projects $ cd py-bootstrap
-    ~/Projects/py-bootstrap $ mkdir ~/Projects/myproject && git archive master | tar -x -C ~/Projects/myproject
+    db = dynochemy.DB('RhettDB', ('user', 'time'), ACCESS_KEY, ACCESS_SECRET)
 
-Now you should have a reasonable working python project. You can set it up in development mode using the `Makefile`
+This is using a table with both Hash and Range keys (user and time).
 
-    ~/Projects/myproject $ make dev
+    create_time = time.time()
 
-The tests should all work:
+    db[('123', create_time)] = {'full_name': 'Rhett Garber'}
 
-    ~/Projects/myproject $ make test
+    print db[('123', create_time)
+
+This does a synchronous operations on a dictionary like database.
+But wait, there is more:
+
+    d1 = db.put_defer({'user': '123', 'time': create_time, 'full_name': 'Rhett Garber'})
+    d2 = db.put_defer({'user': '124', 'time': create_time, 'full_name': 'Rhettly Garber'})
+    d3 = db.put_defer({'user': '125', 'time': create_time, 'full_name': 'Rhettford Garber'})
+    defer.wait_all([d1, d2, d3])
+
+This does 3 puts simulatenously.
+If within an existing tornado environment, you can do something like:
+
+    db = dynochemy.DB('RhettDB', ('user', 'time'), ACCESS_KEY, ACCESS_SECRET, ioloop=IOLoop.instance())
+
+    user = yield tornado.gen.Task(db.get_async, ('123', create_time))
+
+(If you're not familiar with the brilliant tornado.gen stuff, you should be.
 
 
-Contribute
-----------
+Querying has a nice API for it as well:
 
-#. Fork the project on github to start making your changes
-#. Send pull requests with your bug fixes or features
-#. Submit and create issues on github
+    result = db.query('123').reverse().limit(2)()
+    for item in result:
+        print item['full_name']
+
+And of course you do this async as well:
+
+    result = yield tornado.gen.Task(db.query('123').range(t0, t1))
+

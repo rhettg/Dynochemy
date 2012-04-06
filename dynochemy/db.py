@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-This module contains the primary objects that power Bootstrap.
+This module contains the primary objects that powers Dynochemy.
 
-:copyright: (c) 2012 by Firstname Lastname.
+:copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 """
 import copy

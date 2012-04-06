@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 
 """
-bootstrap.util
+dynochemy.utils
 ~~~~~~~~
 
-This module provides utility functions that are used within Bootstrap
-that are also useful for external consumption.
+This module provides utility functions that are used within Dynochemy
+especially for things like formatting datastructures for Dynamo.
 
-:copyright: (c) 2012 by Firstname Lastname.
+:copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 
 """

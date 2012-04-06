@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-This module contains the primary objects that power Bootstrap.
+This module contains tools for doing defered async operations.
+Some of this is inspired by Twisted, but they are pretty different.
 
-:copyright: (c) 2012 by Firstname Lastname.
+:copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 """
 import functools
