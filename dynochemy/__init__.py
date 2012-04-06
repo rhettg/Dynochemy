@@ -21,4 +21,5 @@ __copyright__ = 'Copyright 2012 Firstname Lastname'
 
 
 from . import utils
+from .db import DB
 from .errors import Error

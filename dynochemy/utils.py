@@ -12,15 +12,6 @@ that are also useful for external consumption.
 
 """
 
-def build_key(key_spec, key_value):
-    if len(key_spec) == 1:
-        return {key_spec[0]: _format_value_spec(key_value)}
-    else:
-        out_key = {}
-        for key, value in zip(key_spec, key_value):
-            out_key[key] = _format_value_spec(value)
-        return out_key
-
 def _format_value_spec(value):
     if isinstance(value, basestring):
         return {'S': value}
@@ -39,6 +30,15 @@ def _parse_value_spec(type_spec, value):
     else:
         raise ValueError(type_spec)
 
+def format_key(key_spec, key_value):
+    if len(key_spec) == 1:
+        return {key_spec[0]: _format_value_spec(key_value)}
+    else:
+        out_key = {}
+        for key, value in zip(key_spec, key_value):
+            out_key[key] = _format_value_spec(value)
+        return out_key
+
 def parse_value(value_spec):
     key, value = value_spec.items()[0]
     if len(key) == 1:
@@ -49,3 +49,6 @@ def parse_value(value_spec):
             out.append(_parse_value_spec(type_char, sub_value))
         return out
 
+def parse_item(item):
+    print "Parsing %r" % item
+    return dict((k, parse_value(v)) for k, v in item.iteritems())

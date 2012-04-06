@@ -36,3 +36,9 @@ class BuildKeyTestCase(TestCase):
     def test_multi_number(self):
         key = utils.build_key(('user', 'id'), ('Rhett', 123))
         assert_equal(key, {'user': {'S': 'Rhett'}, 'id': {'N': '123'}})
+
+class ParseItemTestCase(TestCase):
+    def test(self):
+        item = utils.parse_item({'id': {'S': 'Rhett'}, 'value': {'N': '10.5'}})
+        assert_equal(item['id'], 'Rhett')
+        assert_equal(item['value'], 10.5)
