@@ -17,6 +17,14 @@ def _format_value_spec(value):
         return {'S': value}
     elif isinstance(value, (int, float)):
         return {'N': str(value)}
+    elif isinstance(list, tuple):
+        all_values = [_format_value_spec(v) for v in value]
+        spec = ""
+        values = []
+        for value_spec in all_values:
+            spec.append(value_spec.keys()[0])
+            values.append(value_spec.values()[0])
+        return {spec: values}
     else:
         raise ValueError(value)
 
@@ -39,6 +47,9 @@ def format_key(key_spec, key_value):
             out_key[key] = _format_value_spec(value)
         return out_key
 
+def format_item(item):
+    return dict((k, _format_value_spec(v)) for k, v in item.iteritems())
+
 def parse_value(value_spec):
     key, value = value_spec.items()[0]
     if len(key) == 1:
@@ -50,5 +61,4 @@ def parse_value(value_spec):
         return out
 
 def parse_item(item):
-    print "Parsing %r" % item
     return dict((k, parse_value(v)) for k, v in item.iteritems())

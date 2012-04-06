@@ -7,7 +7,6 @@ This module contains the primary objects that power Bootstrap.
 """
 import copy
 import json
-import functools
 import time
 
 from tornado.ioloop import IOLoop
@@ -15,48 +14,16 @@ from asyncdynamo import asyncdynamo
 
 from .errors import Error
 from . import utils
+from .defer import Defer
 
-
-class Defer(object):
-    def __init__(self, ioloop=None, timeout=None):
-        self.done = False
-        self.ioloop = ioloop
-        self.do_stop = False
-        self.timeout = timeout
-        self._timeout_req = None
-
-    def callback(self, *args, **kwargs):
-        self.done = True
-        self.args = args
-        self.kwargs = kwargs
-
-        if self._timeout_req:
-            self.ioloop.remove_timeout(self._timeout_req)
-            self._timeout_req = None
-
-        if self.do_stop:
-            self.ioloop.stop()
-
-    def __call__(self):
-        if not self.ioloop:
-            raise ValueError("IOLoop required")
-
-        if not self.done:
-            self.do_stop = True
-            if self.timeout:
-                self._timeout_req = self.ioloop.add_timeout(time.time() + self.timeout, functools.partial(self.callback, error='Timeout'))
-
-            self.ioloop.start()
-
-        assert self.done
-        return (self.args, self.kwargs)
+class SyncUnallowedError(Error): pass
 
 
 class DB(object):
     def __init__(self, name, key_spec, access_key, access_secret, ioloop=None):
         self.name = name
         self.key_spec = key_spec
-        self.allow_async = bool(ioloop is not None)
+        self.allow_sync = bool(ioloop is None)
         self.ioloop = ioloop or IOLoop()
 
         self._asyncdynamo = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
@@ -64,8 +31,12 @@ class DB(object):
     def _get(self, key, attributes=None, consistent=True, callback=None, timeout=None):
         data = {
                 'TableName': self.name,
-                'Key': utils.format_key(self.key_spec, key)
                }
+
+        if self.has_range:
+            data['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
+        else:
+            data['Key'] = utils.format_key(('HashKeyElement',), [key])
 
         if attributes:
             data['AttributesToGet'] = attributes
@@ -80,8 +51,17 @@ class DB(object):
         self._asyncdynamo.make_request('GetItem', body=json.dumps(data), callback=callback)
         return defer
 
+    def get_async(self, key, callback, attributes=None, consistent=True):
+        self._get(key, attributes=attributes, consistent=consistent, callback=callback)
+
+    def get_defer(self, key, attributes=None, consistent=True):
+        return self._get(key, attributes=attributes, consistent=consistent)
+
     def __getitem__(self, key):
-        d = self._get(key, timeout=5)
+        if not self.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._get(key)
 
         args, kwargs =  d()
         if kwargs.get('error'):
@@ -89,13 +69,71 @@ class DB(object):
         elif 'Item' in args[0]:
             return utils.parse_item(args[0]['Item'])
         else:
-            raise ValueError(args)
+            return None
+
+    get = __getitem__
+
+    def _put(self, value, callback=None, timeout=None):
+        data = {
+                'TableName': self.name,
+               }
+
+        item = utils.format_item(value)
+        data['Item'] = item
+
+        defer = None
+        if callback is None:
+            defer = Defer(self.ioloop, timeout=timeout)
+            callback = defer.callback
+
+        self._asyncdynamo.make_request('PutItem', body=json.dumps(data), callback=callback)
+        return defer
+
+    def put_async(self, value, callback):
+        self._put(value, callback=callback)
+
+    def put_defer(self, value):
+        return self._put(value)
 
     def __setitem__(self, key, value):
-        pass
+        item = copy.copy(value)
+        for key, key_value in zip(self.key_spec, key):
+            item[key] = key_value
+        self.put(item)
+
+    def put(self, value):
+        if not self.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._put(value)
+        args, kwargs = d()
+        if kwargs.get('error'):
+            raise Error(kwargs['error'])
 
     def __delitem__(self, key):
         pass
+
+    def _scan(self, callback=None, timeout=None):
+        data = {
+                'TableName': self.name,
+               }
+
+        defer = None
+        if callback is None:
+            defer = Defer(self.ioloop, timeout=timeout)
+            callback = defer.callback
+
+        self._asyncdynamo.make_request('Scan', body=json.dumps(data), callback=callback)
+        return defer
+
+    def scan(self):
+        if not self.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._scan()
+        args, kwargs = d()
+        result = args[0]
+        return [utils.parse_item(i) for i in result['Items']]
 
     def query(self, hash_key):
         return Query(self, hash_key)
