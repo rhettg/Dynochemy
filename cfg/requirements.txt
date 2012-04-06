@@ -2,7 +2,8 @@ testify
 pep8
 pyflakes
 boto==2.2.1
--e /Users/rhettg/Projects/asyncdynamo
+#-e /Users/rhettg/Projects/asyncdynamo
+git+git://github.com/rhettg/asyncdynamo.git#egg=asyncdynamo
 ipython
 pyzmq
 simplejson
