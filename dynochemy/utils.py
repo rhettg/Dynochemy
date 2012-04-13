@@ -12,13 +12,13 @@ especially for things like formatting datastructures for Dynamo.
 
 """
 
-def _format_value_spec(value):
+def format_value(value):
     if isinstance(value, basestring):
         return {'S': value}
     elif isinstance(value, (int, float)):
         return {'N': str(value)}
     elif isinstance(list, tuple):
-        all_values = [_format_value_spec(v) for v in value]
+        all_values = [format_value(v) for v in value]
         spec = ""
         values = []
         for value_spec in all_values:
@@ -40,15 +40,15 @@ def _parse_value_spec(type_spec, value):
 
 def format_key(key_spec, key_value):
     if len(key_spec) == 1:
-        return {key_spec[0]: _format_value_spec(key_value)}
+        return {key_spec[0]: format_value(key_value)}
     else:
         out_key = {}
         for key, value in zip(key_spec, key_value):
-            out_key[key] = _format_value_spec(value)
+            out_key[key] = format_value(value)
         return out_key
 
 def format_item(item):
-    return dict((k, _format_value_spec(v)) for k, v in item.iteritems())
+    return dict((k, format_value(v)) for k, v in item.iteritems())
 
 def parse_value(value_spec):
     key, value = value_spec.items()[0]

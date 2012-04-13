@@ -21,6 +21,9 @@ class Defer(object):
         self._timeout_req = None
         self._callbacks = []
 
+    def add_callback(self, cb):
+        self._callbacks.append(cb)
+
     def callback(self, *args, **kwargs):
         self.done = True
         self.args = args
@@ -53,6 +56,7 @@ class Defer(object):
     @property
     def result(self):
         return self.args, self.kwargs
+
 
 class ResultErrorDefer(Defer):
     @property
