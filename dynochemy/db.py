@@ -134,6 +134,14 @@ class DB(object):
     def scan(self):
         return Scan(self)
 
+    def scan_next(self, result):
+        if not result.has_next:
+            raise ValueError("Result has no more")
+
+        scan = copy.copy(result.scan)
+        scan.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
+        return scan
+
     def query(self, hash_key):
         return Query(self, hash_key)
 
@@ -156,6 +164,30 @@ class Scan(object):
                      'TableName': self.db.name, 
                     }
 
+    def limit(self, limit):
+        scan = copy.copy(self)
+        scan.args['Limit'] = limit
+        return scan
+
+
+    def _filter(self, name, value, compare):
+        scan = copy.copy(self)
+        scan.args.setdefault('ScanFilter', {})
+        scan.args['ScanFilter'].setdefault(name, {})
+        scan.args['ScanFilter'][name]['ComparisonOperator'] = compare
+        scan.args['ScanFilter'][name].setdefault('AttributeValueList', [])
+        scan.args['ScanFilter'][name]['AttributeValueList'].append(utils.format_value(value))
+        return scan
+
+    def filter_eq(self, name, value):
+        return self._filter(name, value, "EQ")
+
+    def filter_lt(self, name, value):
+        return self._filter(name, value, "LT")
+
+    def filter_gt(self, name, value):
+        return self._filter(name, value, "GT")
+
     def _scan(self, callback=None):
         defer = None
         if callback is None:
@@ -166,7 +198,7 @@ class Scan(object):
             if error is not None:
                 callback(None, error)
 
-            callback([utils.parse_item(i) for i in data['Items']], None)
+            callback(ScanResults(self, data), None)
 
         self.db._asyncdynamo.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
         return defer
@@ -231,7 +263,7 @@ class Query(object):
         def handle_result(result_data, error=None):
             results = None
             if error is None:
-                results = Results(self, result_data)
+                results = QueryResults(self, result_data)
 
             return callback(results, error)
 
@@ -257,8 +289,7 @@ class Query(object):
 
 
 class Results(object):
-    def __init__(self, query, result_data):
-        self.query = query
+    def __init__(self, result_data):
         self.result_data = result_data
 
     def __iter__(self):
@@ -267,6 +298,21 @@ class Results(object):
     def __len__(self):
         return self.result_data['Count']
 
+    def __getitem__(self, key):
+        return utils.parse_item(self.result_data['Items'][key])
+
     @property
     def has_next(self):
         return bool('LastEvaluatedKey' in self.result_data)
+
+
+class QueryResults(Results):
+    def __init__(self, query, result_data):
+        self.query = query
+        self.result_data = result_data
+
+
+class ScanResults(Results):
+    def __init__(self, scan, result_data):
+        self.scan = scan
+        self.result_data = result_data
