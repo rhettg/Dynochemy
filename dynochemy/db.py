@@ -14,7 +14,7 @@ from asyncdynamo import asyncdynamo
 
 from .errors import Error
 from . import utils
-from .defer import Defer
+from .defer import ResultErrorDefer
 
 class SyncUnallowedError(Error): pass
 
@@ -28,7 +28,7 @@ class DB(object):
 
         self._asyncdynamo = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
 
-    def _get(self, key, attributes=None, consistent=True, callback=None, timeout=None):
+    def _get(self, key, attributes=None, consistent=True, callback=None):
         data = {
                 'TableName': self.name,
                }
@@ -45,10 +45,19 @@ class DB(object):
 
         defer = None
         if callback is None:
-            defer = Defer(self.ioloop, timeout=timeout)
+            defer = ResultErrorDefer(self.ioloop)
             callback = defer.callback
 
-        self._asyncdynamo.make_request('GetItem', body=json.dumps(data), callback=callback)
+        def handle_result(data, error=None):
+            if error is not None:
+                callback(None, error)
+
+            if 'Item' in data:
+                callback(utils.parse_item(data['Item']), None)
+            else:
+                callback(None, None)
+
+        self._asyncdynamo.make_request('GetItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def get_async(self, key, callback, attributes=None, consistent=True):
@@ -63,17 +72,18 @@ class DB(object):
 
         d = self._get(key)
 
-        args, kwargs =  d()
-        if kwargs.get('error'):
-            raise Error(kwargs['error'])
-        elif 'Item' in args[0]:
-            return utils.parse_item(args[0]['Item'])
-        else:
-            return None
+        item, error =  d()
+        if error:
+            raise Error(error)
+
+        if item is None:
+            raise KeyError(key)
+
+        return item
 
     get = __getitem__
 
-    def _put(self, value, callback=None, timeout=None):
+    def _put(self, value, callback=None):
         data = {
                 'TableName': self.name,
                }
@@ -83,10 +93,16 @@ class DB(object):
 
         defer = None
         if callback is None:
-            defer = Defer(self.ioloop, timeout=timeout)
+            defer = ResultErrorDefer(self.ioloop)
             callback = defer.callback
 
-        self._asyncdynamo.make_request('PutItem', body=json.dumps(data), callback=callback)
+        def handle_result(data, error=None):
+            if error is not None:
+                callback(None, error)
+
+            callback(None, None)
+
+        self._asyncdynamo.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def put_async(self, value, callback):
@@ -99,41 +115,24 @@ class DB(object):
         item = copy.copy(value)
         for key, key_value in zip(self.key_spec, key):
             item[key] = key_value
+
         self.put(item)
 
-    def put(self, value):
+    def put(self, value, timeout=None):
         if not self.allow_sync:
             raise SyncUnallowedError()
 
         d = self._put(value)
-        args, kwargs = d()
-        if kwargs.get('error'):
-            raise Error(kwargs['error'])
+
+        result, error = d(timeout=timeout)
+        if error:
+            raise Error(error)
 
     def __delitem__(self, key):
         pass
 
-    def _scan(self, callback=None, timeout=None):
-        data = {
-                'TableName': self.name,
-               }
-
-        defer = None
-        if callback is None:
-            defer = Defer(self.ioloop, timeout=timeout)
-            callback = defer.callback
-
-        self._asyncdynamo.make_request('Scan', body=json.dumps(data), callback=callback)
-        return defer
-
     def scan(self):
-        if not self.allow_sync:
-            raise SyncUnallowedError()
-
-        d = self._scan()
-        args, kwargs = d()
-        result = args[0]
-        return [utils.parse_item(i) for i in result['Items']]
+        return Scan(self)
 
     def query(self, hash_key):
         return Query(self, hash_key)
@@ -143,11 +142,51 @@ class DB(object):
             raise ValueError("Result has no more")
 
         query = copy.copy(result.query)
-        query.args['ExclusiveStartKey'] = result.args['LastEvaluatedKey']
+        query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
         return query
 
     def has_range(self):
         return bool(len(self.key_spec) == 2)
+
+
+class Scan(object):
+    def __init__(self, db):
+        self.db = db
+        self.args = {
+                     'TableName': self.db.name, 
+                    }
+
+    def _scan(self, callback=None):
+        defer = None
+        if callback is None:
+            defer = ResultErrorDefer(self.db.ioloop)
+            callback = defer.callback
+
+        def handle_result(data, error=None):
+            if error is not None:
+                callback(None, error)
+
+            callback([utils.parse_item(i) for i in data['Items']], None)
+
+        self.db._asyncdynamo.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
+        return defer
+
+    def __call__(self, timeout=None):
+        if not self.db.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._scan()
+        data, error = d(timeout=timeout)
+        if error:
+            raise Error(error)
+
+        return data
+
+    def defer(self):
+        return self._scan()
+
+    def async(self, callback=None):
+        self._scan(callback=callback)
 
 
 class Query(object):
@@ -183,17 +222,51 @@ class Query(object):
         query.args['Limit'] = limit
         return query
 
+    def _query(self, callback=None):
+        defer = None
+        if callback is None:
+            defer = ResultErrorDefer(self.db.ioloop)
+            callback = defer.callback
+
+        def handle_result(result_data, error=None):
+            results = None
+            if error is None:
+                results = Results(self, result_data)
+
+            return callback(results, error)
+
+        self.db._asyncdynamo.make_request('Query', body=json.dumps(self.args), callback=handle_result)
+        return defer
+
+    def __call__(self, timeout=None):
+        if not self.db.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._query()
+        results, error = d(timeout=timeout)
+        if error:
+            raise Error(error)
+
+        return results
+
+    def defer(self):
+        return self._query()
+
+    def async(self, callback=None):
+        self._query(callback=callback)
+
 
 class Results(object):
-    def __init__(self, args):
-        self.args = args
+    def __init__(self, query, result_data):
+        self.query = query
+        self.result_data = result_data
 
     def __iter__(self):
-        return (utils.parse_item(item) for item in self.args['Items'])
+        return (utils.parse_item(item) for item in self.result_data['Items'])
 
     def __len__(self):
-        return self.args['Count']
+        return self.result_data['Count']
 
     @property
     def has_next(self):
-        return bool('LastEvaluatedKey' in self.args)
+        return bool('LastEvaluatedKey' in self.result_data)
