@@ -80,8 +80,6 @@ class SQLClient(object):
         return None
 
     def do_scan(self, args):
-        pprint.pprint(args)
-
         q = sql.select([self.table])
         if 'Limit' in args:
             q = q.limit(args['Limit'])
@@ -106,6 +104,34 @@ class SQLClient(object):
             else:
                 out['Items'].append(item_data)
 
+
+        return out
+
+    def do_query(self, args):
+        pprint.pprint(args)
+
+        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead']) 
+        if unsupported_keys:
+            raise NotImplementedError(unsupported_keys)
+
+        if len(self.key_spec) < 2:
+            raise NotImplementedError
+
+        expr = self.table.c.hash_key == utils.parse_value(args['HashKeyValue'])
+        q = sql.select([self.table], expr)
+        if 'Limit' in args:
+            q = q.limit(args['Limit'])
+        
+        if args.get('ScanIndexForward', True):
+            q = q.order_by(self.table.c.range_key.asc())
+        else:
+            q = q.order_by(self.table.c.range_key.desc())
+
+        out = {'Items': []}
+        for res in self.engine.execute(q):
+            item_data = json.loads(res[self.table.c.content])
+            item = utils.parse_item(item_data)
+            out['Items'].append(item_data)
 
         return out
 
@@ -140,8 +166,12 @@ if __name__  == '__main__':
 
     #print db[('Britt', 'A')]
 
-    s = db.scan().limit(2) #.filter_gt('value', 10)
-    for r in s():
+    #s = db.scan().limit(2) #.filter_gt('value', 10)
+    #for r in s():
+        #print r
+
+    q = db.query('Britt').limit(2)
+    for r in q():
         print r
 
     #print db[('Rhett', 'A')]
