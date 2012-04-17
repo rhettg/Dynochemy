@@ -31,6 +31,17 @@ def create_db(db_name):
 class CommandError(errors.Error): pass
 
 
+def compare(operator, lval, rval):
+    if operator == 'EQ':
+        return lval == rval
+    elif operator == 'GT':
+        return lval > rval
+    elif operator == 'LT':
+        return lval < rval
+    else:
+        raise NotImplementedError(operator)
+
+
 class SQLClient(object):
     def __init__(self, engine, name, key_spec):
         self.engine = engine
@@ -38,8 +49,7 @@ class SQLClient(object):
 
         self.table = metadata.tables[name]
 
-    def do_getitem(self, body):
-        args = json.loads(body)
+    def do_getitem(self, args):
         filter = sql.and_(self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement']), 
                           self.table.c.range_key == utils.parse_value(args['Key']['RangeKeyElement']))
 
@@ -56,8 +66,8 @@ class SQLClient(object):
 
         return out
 
-    def do_putitem(self, body):
-        item_data = json.loads(body)['Item']
+    def do_putitem(self, args):
+        item_data = args['Item']
         args = utils.parse_item(item_data)
         if len(self.key_spec) == 2:
             hash_key = args[self.key_spec[0]]
@@ -69,10 +79,40 @@ class SQLClient(object):
         self.engine.execute(ins)
         return None
 
+    def do_scan(self, args):
+        pprint.pprint(args)
+
+        q = sql.select([self.table])
+        if 'Limit' in args:
+            q = q.limit(args['Limit'])
+
+        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'ScanFilter']) 
+        if unsupported_keys:
+            raise NotImplementedError(unsupported_keys)
+
+        out = {'Items': []}
+        for res in self.engine.execute(q):
+            item_data = json.loads(res[self.table.c.content])
+            item = utils.parse_item(item_data)
+            if 'ScanFilter' in args:
+                for attribute, filter_spec in args['ScanFilter'].iteritems():
+                    if attribute not in item:
+                        continue
+                    for value_spec in filter_spec['AttributeValueList']:
+                        value = utils.parse_value(value_spec)
+                        if compare(filter_spec['ComparisonOperator'], item[attribute], value):
+                            out['Items'].append(item_data)
+                            break
+            else:
+                out['Items'].append(item_data)
+
+
+        return out
+
     def make_request(self, command, body=None, callback=None):
         result = None
         try:
-            result = getattr(self, "do_%s" % command.lower())(body)
+            result = getattr(self, "do_%s" % command.lower())(json.loads(body))
         except CommandError, e:
             callback(None, error=e.args[0])
             return
@@ -94,13 +134,15 @@ if __name__  == '__main__':
 
     db = SQLDB(engine, 'RhettTest', ('user', 'id'))
 
-    db[('Britt', 'A')] = {'last_name': 'Deal'}
+    db[('Britt', 'A')] = {'last_name': 'Deal', 'value': 9}
+    db[('Britt', 'B')] = {'last_name': 'Deal', 'value': 9}
+    db[('Britt', 'C')] = {'last_name': 'Deal', 'value': 9}
 
-    print db[('Britt', 'A')]
+    #print db[('Britt', 'A')]
 
-    #s = db.scan().limit(2).filter_gt('value', 8)
-    #for r in s():
-        #print r
+    s = db.scan().limit(2) #.filter_gt('value', 10)
+    for r in s():
+        print r
 
     #print db[('Rhett', 'A')]
 
