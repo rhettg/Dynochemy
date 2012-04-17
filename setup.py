@@ -20,7 +20,7 @@ setup(
     name='py-%s' % get_init_val('title'),
     version=get_init_val('version'),
     description=get_init_val('description'),
-    long_description=open('README.rst').read(),
+    long_description=open('README.md').read(),
     author=get_init_val('author'),
     url=get_init_val('url'),
     package_data={'': ['LICENSE', 'NOTICE']},
