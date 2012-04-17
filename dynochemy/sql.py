@@ -53,7 +53,11 @@ class SQLClient(object):
         self.engine = engine
         self.key_spec = key_spec
 
-        self.table = metadata.tables[name]
+        try:
+            tbl = Table(name, metadata, autoload=True, autoload_with=self.engine)
+        except sqlalchemy.exc.NoSuchTableError:
+            self.table = create_db(name, has_range_key=bool(len(key_spec) > 1))
+            self.table.create(engine)
 
     def do_getitem(self, args):
         if len(self.key_spec) > 1:
@@ -180,11 +184,7 @@ class SQLDB(db.BaseDB):
         self.client = SQLClient(engine, name, key_spec)
 
 if __name__  == '__main__':
-
-    tbl = create_db('RhettTest', has_range_key=False)
-
     engine = sqlalchemy.create_engine('sqlite:///:memory:', echo=True)
-    metadata.create_all(engine)
 
     db = SQLDB(engine, 'RhettTest', ('user',))
 
