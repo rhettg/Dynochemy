@@ -24,17 +24,17 @@ class SimpleParseTestCase(TestCase):
         res = utils.parse_value(value)
         assert_equal(res, ['Rhett', 'Ziggy'])
 
-class BuildKeyTestCase(TestCase):
+class FormatKeyTestCase(TestCase):
     def test_single_string(self):
-        key = utils.build_key(('user',), 'Rhett')
+        key = utils.format_key(('user',), 'Rhett')
         assert_equal(key, {'user': {'S': 'Rhett'}})
 
     def test_multi_string(self):
-        key = utils.build_key(('user', 'id'), ('Rhett', 'foo'))
+        key = utils.format_key(('user', 'id'), ('Rhett', 'foo'))
         assert_equal(key, {'user': {'S': 'Rhett'}, 'id': {'S': 'foo'}})
 
     def test_multi_number(self):
-        key = utils.build_key(('user', 'id'), ('Rhett', 123))
+        key = utils.format_key(('user', 'id'), ('Rhett', 123))
         assert_equal(key, {'user': {'S': 'Rhett'}, 'id': {'N': '123'}})
 
 class ParseItemTestCase(TestCase):
