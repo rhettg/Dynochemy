@@ -247,9 +247,11 @@ class Query(object):
             raise ValueError("Must have range")
 
         query = copy.copy(self)
-        query.args['RangeKeyCondition'] = [{self.db.key[1]: utils.format_value(start)}]
+        query.args['RangeKeyCondition'] = [utils.format_value(start)]
         if end is not None:
-            query.args['RangeKeyCondition'].append({self.db.key[1]: utils.format_value(end)})
+            query.args['RangeKeyCondition'].append(utils.format_value(end))
+
+        return query
 
     def reverse(self, reverse=True):
         query = copy.copy(self)

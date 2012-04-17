@@ -110,19 +110,33 @@ class SQLClient(object):
     def do_query(self, args):
         pprint.pprint(args)
 
-        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead']) 
+        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead', 'RangeKeyCondition']) 
         if unsupported_keys:
             raise NotImplementedError(unsupported_keys)
 
         if len(self.key_spec) < 2:
             raise NotImplementedError
 
+        scan_forward = args.get('ScanIndexForward', True)
+
         expr = self.table.c.hash_key == utils.parse_value(args['HashKeyValue'])
+
+        if 'RangeKeyCondition' in args:
+            if scan_forward:
+                expr = sql.and_(expr, self.table.c.range_key >= utils.parse_value(args['RangeKeyCondition'][0]))
+            else:
+                expr = sql.and_(expr, self.table.c.range_key <= utils.parse_value(args['RangeKeyCondition'][0]))
+
+            if len(args['RangeKeyCondition']) > 1:
+                if scan_forward:
+                    expr = sql.and_(expr, self.table.c.range_key <= utils.parse_value(args['RangeKeyCondition'][1]))
+                else:
+                    expr = sql.and_(expr, self.table.c.range_key >= utils.parse_value(args['RangeKeyCondition'][1]))
+
         q = sql.select([self.table], expr)
         if 'Limit' in args:
             q = q.limit(args['Limit'])
-        
-        if args.get('ScanIndexForward', True):
+        if scan_forward:
             q = q.order_by(self.table.c.range_key.asc())
         else:
             q = q.order_by(self.table.c.range_key.desc())
@@ -170,7 +184,7 @@ if __name__  == '__main__':
     #for r in s():
         #print r
 
-    q = db.query('Britt').limit(2)
+    q = db.query('Britt').reverse().range('C', 'B')
     for r in q():
         print r
 
