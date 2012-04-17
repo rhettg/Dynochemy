@@ -40,7 +40,7 @@ class Defer(object):
             c(self)
 
     def __call__(self, timeout=None):
-        if not self.ioloop:
+        if not self.done and not self.ioloop:
             raise ValueError("IOLoop required")
 
         if not self.done:

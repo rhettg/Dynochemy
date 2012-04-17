@@ -19,14 +19,12 @@ from .defer import ResultErrorDefer
 class SyncUnallowedError(Error): pass
 
 
-class DB(object):
-    def __init__(self, name, key_spec, access_key, access_secret, ioloop=None):
+class BaseDB(object):
+    def __init__(self, name, key_spec):
         self.name = name
         self.key_spec = key_spec
-        self.allow_sync = bool(ioloop is None)
-        self.ioloop = ioloop or IOLoop()
-
-        self._asyncdynamo = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
+        self.allow_sync = True
+        self.ioloop = None
 
     def _get(self, key, attributes=None, consistent=True, callback=None):
         data = {
@@ -57,7 +55,7 @@ class DB(object):
             else:
                 callback(None, None)
 
-        self._asyncdynamo.make_request('GetItem', body=json.dumps(data), callback=handle_result)
+        self.client.make_request('GetItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def get_async(self, key, callback, attributes=None, consistent=True):
@@ -102,7 +100,7 @@ class DB(object):
 
             callback(None, None)
 
-        self._asyncdynamo.make_request('PutItem', body=json.dumps(data), callback=handle_result)
+        self.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def put_async(self, value, callback):
@@ -157,6 +155,15 @@ class DB(object):
         return bool(len(self.key_spec) == 2)
 
 
+class DB(BaseDB):
+    def __init__(self, name, key_spec, access_key, access_secret, ioloop=None):
+        super(BaseDB, self).__init__(name, key_spec)
+
+        self.allow_sync = bool(ioloop is None)
+        self.ioloop = ioloop or IOLoop()
+        self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
+
+
 class Scan(object):
     def __init__(self, db):
         self.db = db
@@ -200,7 +207,7 @@ class Scan(object):
 
             callback(ScanResults(self, data), None)
 
-        self.db._asyncdynamo.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
+        self.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
         return defer
 
     def __call__(self, timeout=None):
@@ -267,7 +274,7 @@ class Query(object):
 
             return callback(results, error)
 
-        self.db._asyncdynamo.make_request('Query', body=json.dumps(self.args), callback=handle_result)
+        self.db.client.make_request('Query', body=json.dumps(self.args), callback=handle_result)
         return defer
 
     def __call__(self, timeout=None):
@@ -286,6 +293,7 @@ class Query(object):
 
     def async(self, callback=None):
         self._query(callback=callback)
+
 
 
 class Results(object):
@@ -316,3 +324,4 @@ class ScanResults(Results):
     def __init__(self, scan, result_data):
         self.scan = scan
         self.result_data = result_data
+

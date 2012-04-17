@@ -57,5 +57,5 @@ Querying has a nice API for it as well:
 
 And of course you do this async as well:
 
-    result = yield tornado.gen.Task(db.query('123').range(t0, t1))
+    result = yield tornado.gen.Task(db.query('123').range(t0, t1).async())
 
