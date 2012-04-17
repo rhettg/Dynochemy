@@ -68,7 +68,10 @@ class BaseDB(object):
         if not self.allow_sync:
             raise SyncUnallowedError()
 
-        d = self._get(key)
+        if len(self.key_spec) > 1:
+            d = self._get(key)
+        else:
+            d = self._get((key,))
 
         item, error =  d()
         if error:
@@ -111,8 +114,11 @@ class BaseDB(object):
 
     def __setitem__(self, key, value):
         item = copy.copy(value)
-        for key, key_value in zip(self.key_spec, key):
-            item[key] = key_value
+        if len(self.key_spec) > 1:
+            for key, key_value in zip(self.key_spec, key):
+                item[key] = key_value
+        else:
+            item[self.key_spec[0]] = key
 
         self.put(item)
 
@@ -239,7 +245,7 @@ class Query(object):
 
     def attributes(self, *args):
         query = copy.copy(self)
-        query.args['AttributesToGet'] = args
+        query.args['AttributesToGet'] = args[0]
         return query
         
     def range(self, start, end=None):

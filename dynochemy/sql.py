@@ -18,12 +18,18 @@ from dynochemy import utils
 
 metadata = sqlalchemy.MetaData()
 
-def create_db(db_name):
-    dynamo_tbl = Table(db_name, metadata,
-                       Column('hash_key', String, primary_key=True),
-                       Column('range_key', String, primary_key=True),
-                       Column('content', LargeBinary),
-                    )
+def create_db(db_name, has_range_key=True):
+    if has_range_key:
+        dynamo_tbl = Table(db_name, metadata,
+                           Column('hash_key', String, primary_key=True),
+                           Column('range_key', String, primary_key=True),
+                           Column('content', LargeBinary),
+                        )
+    else:
+        dynamo_tbl = Table(db_name, metadata,
+                           Column('hash_key', String, primary_key=True),
+                           Column('content', LargeBinary),
+                        )
 
     return dynamo_tbl
 
@@ -50,10 +56,13 @@ class SQLClient(object):
         self.table = metadata.tables[name]
 
     def do_getitem(self, args):
-        filter = sql.and_(self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement']), 
-                          self.table.c.range_key == utils.parse_value(args['Key']['RangeKeyElement']))
+        if len(self.key_spec) > 1:
+            expr = sql.and_(self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement']), 
+                              self.table.c.range_key == utils.parse_value(args['Key']['RangeKeyElement']))
+        else:
+            expr = self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement'])
 
-        q = sql.select([self.table], filter)
+        q = sql.select([self.table], expr)
         try:
             res = list(self.engine.execute(q))[0]
         except IndexError:
@@ -69,13 +78,13 @@ class SQLClient(object):
     def do_putitem(self, args):
         item_data = args['Item']
         args = utils.parse_item(item_data)
+        hash_key = args[self.key_spec[0]]
         if len(self.key_spec) == 2:
-            hash_key = args[self.key_spec[0]]
             range_key = args[self.key_spec[1]]
+            ins = self.table.insert().values(hash_key=hash_key, range_key=range_key, content=json.dumps(item_data))
         else:
-            raise NotImplementedError
+            ins = self.table.insert().values(hash_key=hash_key, content=json.dumps(item_data))
 
-        ins = self.table.insert().values(hash_key=hash_key, range_key=range_key, content=json.dumps(item_data))
         self.engine.execute(ins)
         return None
 
@@ -108,20 +117,19 @@ class SQLClient(object):
         return out
 
     def do_query(self, args):
-        pprint.pprint(args)
-
-        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead', 'RangeKeyCondition']) 
+        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead', 'RangeKeyCondition', 'AttributesToGet']) 
         if unsupported_keys:
             raise NotImplementedError(unsupported_keys)
 
-        if len(self.key_spec) < 2:
-            raise NotImplementedError
 
         scan_forward = args.get('ScanIndexForward', True)
 
         expr = self.table.c.hash_key == utils.parse_value(args['HashKeyValue'])
 
         if 'RangeKeyCondition' in args:
+            if len(self.key_spec) < 2:
+                raise NotImplementedError
+
             if scan_forward:
                 expr = sql.and_(expr, self.table.c.range_key >= utils.parse_value(args['RangeKeyCondition'][0]))
             else:
@@ -136,16 +144,22 @@ class SQLClient(object):
         q = sql.select([self.table], expr)
         if 'Limit' in args:
             q = q.limit(args['Limit'])
-        if scan_forward:
-            q = q.order_by(self.table.c.range_key.asc())
-        else:
-            q = q.order_by(self.table.c.range_key.desc())
+
+        if len(self.key_spec) > 1:
+            if scan_forward:
+                q = q.order_by(self.table.c.range_key.asc())
+            else:
+                q = q.order_by(self.table.c.range_key.desc())
 
         out = {'Items': []}
         for res in self.engine.execute(q):
             item_data = json.loads(res[self.table.c.content])
             item = utils.parse_item(item_data)
-            out['Items'].append(item_data)
+            if 'AttributesToGet' in args:
+                out_item = dict((col_name, item_data[col_name]) for col_name in args['AttributesToGet'])
+                out['Items'].append(out_item)
+            else:
+                out['Items'].append(item_data)
 
         return out
 
@@ -167,25 +181,25 @@ class SQLDB(db.BaseDB):
 
 if __name__  == '__main__':
 
-    tbl = create_db('RhettTest')
+    tbl = create_db('RhettTest', has_range_key=False)
 
     engine = sqlalchemy.create_engine('sqlite:///:memory:', echo=True)
     metadata.create_all(engine)
 
-    db = SQLDB(engine, 'RhettTest', ('user', 'id'))
+    db = SQLDB(engine, 'RhettTest', ('user',))
 
-    db[('Britt', 'A')] = {'last_name': 'Deal', 'value': 9}
-    db[('Britt', 'B')] = {'last_name': 'Deal', 'value': 9}
-    db[('Britt', 'C')] = {'last_name': 'Deal', 'value': 9}
+    db['Britt'] = {'last_name': 'Deal', 'value': 9}
+    db['Rhett'] = {'last_name': 'Rhett', 'value': 10}
 
-    #print db[('Britt', 'A')]
+    print db['Britt']
 
     #s = db.scan().limit(2) #.filter_gt('value', 10)
     #for r in s():
         #print r
 
-    q = db.query('Britt').reverse().range('C', 'B')
-    for r in q():
+    q = db.query('Britt').reverse().attributes(['user', 'value']).defer()
+    res, error = q()
+    for r in res:
         print r
 
     #print db[('Rhett', 'A')]
