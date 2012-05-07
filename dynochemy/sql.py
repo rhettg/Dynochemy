@@ -16,9 +16,8 @@ from dynochemy import db
 from dynochemy import errors
 from dynochemy import utils
 
-metadata = sqlalchemy.MetaData()
 
-def create_db(db_name, has_range_key=True):
+def create_db(db_name, metadata, has_range_key=True):
     if has_range_key:
         dynamo_tbl = Table(db_name, metadata,
                            Column('hash_key', String, primary_key=True),
@@ -53,10 +52,12 @@ class SQLClient(object):
         self.engine = engine
         self.key_spec = key_spec
 
+        metadata = sqlalchemy.MetaData(bind=engine)
+
         try:
-            tbl = Table(name, metadata, autoload=True, autoload_with=self.engine)
+            self.table = Table(name, metadata, autoload=True, autoload_with=self.engine)
         except sqlalchemy.exc.NoSuchTableError:
-            self.table = create_db(name, has_range_key=bool(len(key_spec) > 1))
+            self.table = create_db(name, metadata, has_range_key=bool(len(key_spec) > 1))
             self.table.create(engine)
 
     def do_getitem(self, args):
