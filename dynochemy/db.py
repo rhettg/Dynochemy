@@ -163,7 +163,7 @@ class BaseDB(object):
 
 class DB(BaseDB):
     def __init__(self, name, key_spec, access_key, access_secret, ioloop=None):
-        super(BaseDB, self).__init__(name, key_spec)
+        super(DB, self).__init__(name, key_spec)
 
         self.allow_sync = bool(ioloop is None)
         self.ioloop = ioloop or IOLoop()
