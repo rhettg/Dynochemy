@@ -135,16 +135,29 @@ class SQLClient(object):
             if len(self.key_spec) < 2:
                 raise NotImplementedError
 
-            if scan_forward:
-                expr = sql.and_(expr, self.table.c.range_key >= utils.parse_value(args['RangeKeyCondition'][0]))
-            else:
-                expr = sql.and_(expr, self.table.c.range_key <= utils.parse_value(args['RangeKeyCondition'][0]))
+            operator = args['RangeKeyCondition']['ComparisonOperator']
+            if operator == 'BETWEEN':
+                start = utils.parse_value(args['RangeKeyCondition']['AttributeValueList'][0])
+                end = utils.parse_value(args['RangeKeyCondition']['AttributeValueList'][1])
+                expr = sql.and_(expr, self.table.c.range_key.between(start, end))
 
-            if len(args['RangeKeyCondition']) > 1:
-                if scan_forward:
-                    expr = sql.and_(expr, self.table.c.range_key <= utils.parse_value(args['RangeKeyCondition'][1]))
+            else:
+                range_value = utils.parse_value(args['RangeKeyCondition']['AttributeValueList'][0])
+                if operator == 'GT':
+                    expr = sql.and_(expr, self.table.c.range_key > range_value)
+                elif operator == 'LT':
+                    expr = sql.and_(expr, self.table.c.range_key < range_value)
+                elif operator == 'GE':
+                    expr = sql.and_(expr, self.table.c.range_key >= range_value)
+                elif operator == 'LE':
+                    expr = sql.and_(expr, self.table.c.range_key <= range_value)
+                elif operator == 'EQ':
+                    expr = sql.and_(expr, self.table.c.range_key == range_value)
+                elif operator == 'BEGINS_WITH':
+                    expr = sql.and_(expr, self.table.c.range_key.like('%s%%' % range_value))
                 else:
-                    expr = sql.and_(expr, self.table.c.range_key >= utils.parse_value(args['RangeKeyCondition'][1]))
+                    raise NotImplementedError
+
 
         q = sql.select([self.table], expr)
         if 'Limit' in args:

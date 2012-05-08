@@ -248,14 +248,28 @@ class Query(object):
         query.args['AttributesToGet'] = args[0]
         return query
         
-    def range(self, start, end=None):
+    def range(self, start=None, end=None):
+        """Includes a condition where by range keys start at 'start' (inclusive) and are less than 'end' (exclusive)
+        
+        """
         if not self.db.has_range:
             raise ValueError("Must have range")
 
         query = copy.copy(self)
-        query.args['RangeKeyCondition'] = [utils.format_value(start)]
-        if end is not None:
-            query.args['RangeKeyCondition'].append(utils.format_value(end))
+        query.args['RangeKeyCondition'] = condition = {'AttributeValueList': [], 'ComparisonOperator': None}
+        if None not in (start, end):
+            # We have a complete start to end condition
+            condition['AttributeValueList'].append(utils.format_value(start))
+            condition['AttributeValueList'].append(utils.format_value(end))
+            condition['ComparisonOperator'] = "BETWEEN"
+
+        elif start is not None:
+            condition['AttributeValueList'].append(utils.format_value(start))
+            condition['ComparisonOperator'] = "GE"
+
+        elif end is not None:
+            condition['AttributeValueList'].append(utils.format_value(end))
+            condition['ComparisonOperator'] = "LT"
 
         return query
 
