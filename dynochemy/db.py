@@ -157,6 +157,9 @@ class BaseDB(object):
         query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
         return query
 
+    def batch(self):
+        return Batch(self)
+
     def has_range(self):
         return bool(len(self.key_spec) == 2)
 
@@ -168,6 +171,92 @@ class DB(BaseDB):
         self.allow_sync = bool(ioloop is None)
         self.ioloop = ioloop or IOLoop()
         self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
+
+
+class Batch(object):
+    """Object for doing a batch operation.
+
+    The caller can do as many put, get or delete operations on the batch as needed, and the requests
+    will be combined into one or more requests to DynamoDB
+
+    Usage should be something like:
+
+        b = db.batch()
+        b.put(item1)
+        b.put(item2)
+
+        g1 = b.get(key3)
+        g2 = b.get(key4)
+
+        b()
+
+        if not b.errors
+            assert g1.done
+            print g1.result
+
+    Each operation returns a 'defer' object that can later retrieve results.
+    Note that a batch is in no way atomic. Even the underlying batch operations provided by DynamoDB are not
+    really atomic.
+
+    Typically, a request will either error or not. However, some elements may be unprocessed due to exceeding capacity.
+    In this case, the defer object for the operation will not be complete (`not d.done`).
+    """
+    MAX_READS = 100
+    MAX_WRITES = 25
+
+    def __init__(self, db):
+        self.db = db
+        self._write_requests = []
+        self._read_requests = []
+
+        # This defer tracks the over all status of this batch.
+        # When all all 
+        self._defer = defer.Defer()
+
+    def put(self, value):
+        d = BatchOperationDefer()
+
+        req = {'PutRequest': {"Item": value}}
+        self._write_requests.append((d, req))
+
+        return d
+
+    def delete(self, key):
+        pass
+
+    def get(self, key):
+        pass
+
+    def __call__(self, timeout=None):
+        d = self.run()
+        d()
+
+    def async(self, callback=None):
+        pass
+
+    def defer(self):
+        return self._run()
+
+    def _callback(self, result, error=None):
+        pass
+
+    def _run_write(self):
+        pass
+
+    def _run_read(self):
+        pass
+
+    def _run(self):
+        if self.write_requests:
+            batch_write_defer = self._batch_write()
+
+        if self.read_requests:
+            batch_read_defer = self._batch_read()
+
+    @property
+    def errors(self):
+        return None
+
 
 
 class Scan(object):
