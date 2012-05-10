@@ -8,6 +8,7 @@ This module contains the primary objects that powers Dynochemy.
 import copy
 import json
 import time
+import logging
 
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
@@ -15,6 +16,10 @@ from asyncdynamo import asyncdynamo
 from .errors import Error
 from . import utils
 from .defer import ResultErrorDefer
+from .defer import ResultErrorDefer
+
+
+log = logging.getLogger(__name__)
 
 class SyncUnallowedError(Error): pass
 
@@ -157,8 +162,11 @@ class BaseDB(object):
         query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
         return query
 
-    def batch(self):
-        return Batch(self)
+    def batch_write(self):
+        return WriteBatch(self)
+
+    def batch_read(self):
+        return ReadBatch(self)
 
     def has_range(self):
         return bool(len(self.key_spec) == 2)
@@ -181,18 +189,14 @@ class Batch(object):
 
     Usage should be something like:
 
-        b = db.batch()
+        b = db.batch_write()
         b.put(item1)
         b.put(item2)
 
-        g1 = b.get(key3)
-        g2 = b.get(key4)
-
         b()
 
-        if not b.errors
-            assert g1.done
-            print g1.result
+        if b.errors:
+            raise Exception
 
     Each operation returns a 'defer' object that can later retrieve results.
     Note that a batch is in no way atomic. Even the underlying batch operations provided by DynamoDB are not
@@ -201,62 +205,142 @@ class Batch(object):
     Typically, a request will either error or not. However, some elements may be unprocessed due to exceeding capacity.
     In this case, the defer object for the operation will not be complete (`not d.done`).
     """
-    MAX_READS = 100
-    MAX_WRITES = 25
 
     def __init__(self, db):
         self.db = db
-        self._write_requests = []
-        self._read_requests = []
+
+        # We use several data structures to manage our requests
+        # Requests are identified by a key, the format varying based on type of request. Generally it's a tuple
+        # and some uniquly identifying information.
+
+        # This is our queue of requests that need processing
+        self._requests = []
+
+        # Map of request key to the actual request data
+        self._request_data = {}
+
+        # Map of request key to the defer we returned for it.
+        self._request_defer = {}
+
+
+        # Defer objects for outstanding batches. When this is empty, we're done.
+        self._batch_defers = []
 
         # This defer tracks the over all status of this batch.
         # When all all 
-        self._defer = defer.Defer()
+        self._defer = ResultErrorDefer()
 
-    def put(self, value):
-        d = BatchOperationDefer()
-
-        req = {'PutRequest': {"Item": value}}
-        self._write_requests.append((d, req))
-
-        return d
-
-    def delete(self, key):
-        pass
-
-    def get(self, key):
-        pass
+        self.errors = []
 
     def __call__(self, timeout=None):
         d = self.run()
-        d()
+        return d()
 
     def async(self, callback=None):
-        pass
+        if callback:
+            raise NotImplementedError
+
+        self._run()
 
     def defer(self):
         return self._run()
 
-    def _callback(self, result, error=None):
-        pass
+    def _callback(self, deferred):
+        log.debug("Callback for df %r", deferred)
 
-    def _run_write(self):
-        pass
+        self._batch_defers.remove(deferred)
 
-    def _run_read(self):
-        pass
+        # We may need to make another batch request
+        self._run()
+
+        log.debug("Currently have %d batches outstanding", len(self._batch_defers)) 
+
+        if len(self._batch_defers) == 0:
+            # And we're done.
+            self._defer.callback()
+
+    def _make_request(requests):
+        raise NotImplementedError
 
     def _run(self):
-        if self.write_requests:
-            batch_write_defer = self._batch_write()
+        log.debug("Creating batches, %d requests outstanding", len(self._requests))
 
-        if self.read_requests:
-            batch_read_defer = self._batch_read()
+        while self._requests:
+            request_group = []
 
-    @property
-    def errors(self):
-        return None
+            while len(request_group) < self.MAX_ITEMS and len(self._requests) > 0:
+                request_group.append(self._requests.pop())
 
+            df = self._run_batch(request_group)
+            df.add_callback(self._callback)
+            self._batch_defers.append(df)
+
+        return self._defer
+
+    def _item_key(self, item):
+        """Return a tuple of identifying information for the item.
+
+        This is based on the keys."""
+        key = [item[k] for k in self.db.key_spec]
+        return tuple(key)
+
+    def _key_key(self, key):
+        """Return a tuple of identifying information for the parsed key"""
+
+        return (key['HashKeyElement'], key['RangeKeyElement'])
+
+
+
+class WriteBatch(Batch):
+    MAX_ITEMS = 25
+
+    def put(self, value):
+        df = ResultErrorDefer()
+        args = {'PutRequest': {"Item": utils.format_item(value)}}
+
+        req_key = ("PutRequest", self._item_key(value))
+
+        log.debug("Building request %r", req_key)
+
+        self._request_defer[req_key] = df
+        self._request_data[req_key] = args
+        self._requests.append(req_key)
+
+        return df
+
+    def delete(self, key):
+        raise NotImplementedError
+
+    def _run_batch(request_keys):
+        log.info("Creating BatchWrite request for %d items", len(request_keys))
+
+        batch_defer = ResultErrorDefer()
+
+        request_data = []
+        args = {"RequestItems": {self.db.name: request_data}}
+
+        for key in request_keys:
+            request_data.append(self._request_data[key])
+
+        def handle_result(data, error=None):
+            if error is not None:
+                for key in request_keys:
+                    self._request_defer[key].callback(None, error)
+
+                log.error("Received error for batch: %r", error)
+                self.errors.append(error)
+                batch_defer.callback(None, error)
+            else:
+                log.debug("Received successful result from batch: %r", data)
+
+                # TODO: Requeue 'UnprocessedItems'
+                if data.get('UnprocessedItems'):
+                    raise NotImplementedError
+
+                batch_defer.callback(data, None)
+
+        self.db.client.make_request('BatchWriteItem', body=json.dumps(args), callback=handle_result)
+        return batch_defer
 
 
 class Scan(object):
