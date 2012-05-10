@@ -324,12 +324,13 @@ class WriteBatch(Batch):
 
         def handle_result(data, error=None):
             if error is not None:
-                for key in request_keys:
-                    self._request_defer[key].callback(None, error)
-
                 log.error("Received error for batch: %r", error)
+
+                for key in request_keys:
+                    self._request_defer[key].callback(None, error=error)
+
                 self.errors.append(error)
-                batch_defer.callback(None, error)
+                batch_defer.callback(None, error=error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -338,9 +339,9 @@ class WriteBatch(Batch):
                     raise NotImplementedError
 
                 for key in request_keys:
-                    self._request_defer[key].callback(data, None)
+                    self._request_defer[key].callback(data)
 
-                batch_defer.callback(data, None)
+                batch_defer.callback(data)
 
         self.db.client.make_request('BatchWriteItem', body=json.dumps(args), callback=handle_result)
         return batch_defer
