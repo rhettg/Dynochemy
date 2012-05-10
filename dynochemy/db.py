@@ -311,7 +311,7 @@ class WriteBatch(Batch):
     def delete(self, key):
         raise NotImplementedError
 
-    def _run_batch(request_keys):
+    def _run_batch(self, request_keys):
         log.info("Creating BatchWrite request for %d items", len(request_keys))
 
         batch_defer = ResultErrorDefer()
@@ -336,6 +336,9 @@ class WriteBatch(Batch):
                 # TODO: Requeue 'UnprocessedItems'
                 if data.get('UnprocessedItems'):
                     raise NotImplementedError
+
+                for key in request_keys:
+                    self._request_defer[key].callback(data, None)
 
                 batch_defer.callback(data, None)
 

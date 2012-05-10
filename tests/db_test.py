@@ -1,4 +1,5 @@
 import time
+import pprint
 
 from testify import *
 from dynochemy import db
@@ -30,6 +31,17 @@ class SimpleBatchTest(TestCase):
 
     def test(self):
         batch = self.db.batch_write()
+        item_dfs = []
         for item in self.items:
-            batch.put(item)
+            item_dfs.append(batch.put(item))
 
+        d = batch.defer()
+        assert_equal(len(self.db.client.make_request.calls), 1)
+
+        callback = self.db.client.make_request.calls[0][1]['callback']
+
+        callback({})
+
+        assert d.done
+        for df in item_dfs:
+            assert df.done
