@@ -24,6 +24,7 @@ class SimpleParseTestCase(TestCase):
         res = utils.parse_value(value)
         assert_equal(res, ['Rhett', 'Ziggy'])
 
+
 class FormatKeyTestCase(TestCase):
     def test_single_string(self):
         key = utils.format_key(('user',), 'Rhett')
@@ -37,8 +38,22 @@ class FormatKeyTestCase(TestCase):
         key = utils.format_key(('user', 'id'), ('Rhett', 123))
         assert_equal(key, {'user': {'S': 'Rhett'}, 'id': {'N': '123'}})
 
+    def test_multi_number_float(self):
+        key = utils.format_key(('user', 'id'), ('Rhett', 123.123))
+        assert_equal(key, {'user': {'S': 'Rhett'}, 'id': {'N': '123.123'}})
+
+
+class FormatItemTestCase(TestCase):
+    def test(self):
+        item = {'user': 'Rhett', 'value': 123.123, 'empty': ''}
+        fmt_item = utils.format_item(item)
+
+        assert_equal(fmt_item['user'], {'S': 'Rhett'})
+        assert_equal(fmt_item['value'], {'N': '123.123'})
+        assert 'empty' not in fmt_item
+
 class ParseItemTestCase(TestCase):
     def test(self):
-        item = utils.parse_item({'id': {'S': 'Rhett'}, 'value': {'N': '10.5'}})
+        item = utils.parse_item({'id': {'S': 'Rhett'}, 'value': {'N': '10.125'}})
         assert_equal(item['id'], 'Rhett')
-        assert_equal(item['value'], 10.5)
+        assert_equal(item['value'], 10.125)

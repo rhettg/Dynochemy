@@ -16,7 +16,7 @@ def format_value(value):
     if isinstance(value, basestring):
         return {'S': value}
     elif isinstance(value, (int, float)):
-        return {'N': str(value)}
+        return {'N': repr(value)}
     elif isinstance(list, tuple):
         all_values = [format_value(v) for v in value]
         spec = ""
@@ -48,7 +48,7 @@ def format_key(key_spec, key_value):
         return out_key
 
 def format_item(item):
-    return dict((k, format_value(v)) for k, v in item.iteritems())
+    return dict((k, format_value(v)) for k, v in item.iteritems() if v not in ('', None))
 
 def parse_value(value_spec):
     key, value = value_spec.items()[0]
