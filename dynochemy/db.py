@@ -238,14 +238,16 @@ class Batch(object):
 
     def async(self, callback=None):
         if callback:
-            raise NotImplementedError
+            def defer_callback(df):
+                callback(df.result)
+            self._defer.add_callback(defer_callback)
 
         self._run()
 
     def defer(self):
         return self._run()
 
-    def _callback(self, deferred):
+    def _batch_callback(self, deferred):
         log.debug("Callback for df %r", deferred)
 
         self._batch_defers.remove(deferred)
@@ -253,11 +255,18 @@ class Batch(object):
         # We may need to make another batch request
         self._run()
 
-        log.debug("Currently have %d batches outstanding", len(self._batch_defers)) 
+        if deferred.kwargs.get('error'):
+            error = deferred.kwargs['error']
+            error_data = json.loads(error.data)
+            # TODO: We should handle this internally with some sort of exponential backoff
+            if 'ProvisionedThroughputExceededException' in error_data['__type']:
+                raise Exception('provision exceeded')
 
-        if len(self._batch_defers) == 0:
-            # And we're done.
-            self._defer.callback()
+            self._defer.callback(None, error=deferred.kwargs['error'])
+        else:
+            if len(self._batch_defers) == 0:
+                # And we're done. We don't have any data to provide though.
+                self._defer.callback(None)
 
     def _make_request(requests):
         raise NotImplementedError
@@ -271,9 +280,7 @@ class Batch(object):
             while len(request_group) < self.MAX_ITEMS and len(self._requests) > 0:
                 request_group.append(self._requests.pop())
 
-            df = self._run_batch(request_group)
-            df.add_callback(self._callback)
-            self._batch_defers.append(df)
+            self._run_batch(request_group)
 
         return self._defer
 
@@ -312,9 +319,11 @@ class WriteBatch(Batch):
         raise NotImplementedError
 
     def _run_batch(self, request_keys):
-        log.info("Creating BatchWrite request for %d items", len(request_keys))
+        log.debug("Creating BatchWrite request for %d items", len(request_keys))
 
         batch_defer = ResultErrorDefer()
+        batch_defer.add_callback(self._batch_callback)
+        self._batch_defers.append(batch_defer)
 
         request_data = []
         args = {"RequestItems": {self.db.name: request_data}}
@@ -334,12 +343,30 @@ class WriteBatch(Batch):
             else:
                 log.debug("Received successful result from batch: %r", data)
 
-                # TODO: Requeue 'UnprocessedItems'
+                unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
-                    raise NotImplementedError
+                    for tbl, unprocessed_items in data['UnprocessedItems'].iteritems():
+
+                        assert tbl == self.db.name
+
+                        for item in unprocessed_items:
+                            (req_type, req), = item.items()
+                            key = self._item_key(utils.parse_item(req['Item']))
+                            req_key = (req_type, key)
+
+                            if req_key not in self._request_data:
+                                log.warning("%r not found in %r", req_key, self._request_data.keys())
+
+                            assert req_key in self._request_data
+                            unprocessed_keys.add(req_key)
+                            self._requests.append(req_key)
+
+                if unprocessed_keys:
+                    log.warning("Found %d keys unprocessed", len(unprocessed_keys))
 
                 for key in request_keys:
-                    self._request_defer[key].callback(data)
+                    if key not in unprocessed_keys:
+                        self._request_defer[key].callback(data)
 
                 batch_defer.callback(data)
 

@@ -61,7 +61,10 @@ class Defer(object):
 class ResultErrorDefer(Defer):
     @property
     def result(self):
-        return self.args[0], self.kwargs.get('error')
+        if self.args:
+            return self.args[0], self.kwargs.get('error')
+        else:
+            return None, self.kwargs.get('error')
 
 
 def wait_all(all_deferred, timeout=None):

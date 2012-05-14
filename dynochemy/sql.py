@@ -80,15 +80,11 @@ class SQLClient(object):
 
         return out
 
-    def do_putitem(self, args):
-        item_data = args['Item']
-        if 'Expected' in args:
-            raise NotImplementedError
-
-        args = utils.parse_item(item_data)
-        hash_key = args[self.key_spec[0]]
+    def _put_item(self, item_data):
+        item = utils.parse_item(item_data)
+        hash_key = item[self.key_spec[0]]
         if len(self.key_spec) == 2:
-            range_key = args[self.key_spec[1]]
+            range_key = item[self.key_spec[1]]
             del_q = self.table.delete().where(sql.and_(self.table.c.hash_key==hash_key, self.table.c.range_key==range_key))
             ins = self.table.insert().values(hash_key=hash_key, range_key=range_key, content=json.dumps(item_data))
         else:
@@ -102,7 +98,27 @@ class SQLClient(object):
             self.engine.execute(del_q)
             self.engine.execute(ins)
 
-        return None
+    def do_putitem(self, args):
+        item_data = args['Item']
+        if 'Expected' in args:
+            raise NotImplementedError
+
+        self._put_item(item_data)
+
+    def do_batchwriteitem(self, args):
+        for _, requests in args['RequestItems'].iteritems():
+            for request in requests:
+                req_type = request.keys()[0]
+                item = request[req_type]['Item']
+
+                if req_type == "PutRequest":
+                    self._put_item(item)
+                elif req_type == "DeleteRequest":
+                    raise NotImplementedError
+                else:
+                    raise NotImplementedError
+
+        return {}
 
     def do_scan(self, args):
         q = sql.select([self.table])
