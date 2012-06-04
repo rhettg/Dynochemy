@@ -105,6 +105,60 @@ class SQLClient(object):
 
         self._put_item(item_data)
 
+    def do_updateitem(self, args):
+        if 'Expected' in args:
+            raise NotImplementedError
+
+        if args.get('ReturnValues') not in (None, 'ALL_OLD', 'ALL_NEW'):
+            raise NotImplementedError
+
+        if len(self.key_spec) > 1:
+            key = (utils.parse_value(args['Key']['HashKeyElement']), 
+                   utils.parse_value(args['Key']['RangeKeyElement']))
+            expr = sql.and_(self.table.c.hash_key == key[0],
+                              self.table.c.range_key == key[1])
+        else:
+            key = (utils.parse_value(args['Key']['HashKeyElement']),)
+            expr = self.table.c.hash_key == key[0]
+
+        q = sql.select([self.table], expr)
+        res = list(self.engine.execute(q))
+        if res:
+            item = json.loads(res[0][self.table.c.content])
+        else:
+            item = {}
+            item.update(utils.format_key(self.key_spec, key))
+
+        real_item = utils.parse_item(item)
+
+        # Apply our updates
+        for attribute, value_update in args['AttributeUpdates'].iteritems():
+            if value_update['Action'] == "ADD":
+                if attribute in real_item:
+                    if isinstance(real_item[attribute], (int,float)):
+                        real_item[attribute] += utils.parse_value(value_update['Value'])
+                    else:
+                        real_item[attribute].append(utils.parse_value(value_update['Value']))
+                else:
+                    real_item[attribute] = utils.parse_value(value_update['Value'])
+
+            elif value_update['Action'] == "PUT":
+                real_item[attribute] = utils.parse_value(value_update['Value'])
+            elif value_update['Action'] == "DELETE":
+                del real_item[attribute]
+            else:
+                raise ValueError(value_update['Action'])
+        
+        # write to the db
+        self._put_item(utils.format_item(real_item))
+
+        if args.get('ReturnValues', 'NONE') == 'NONE':
+            return {}
+        elif args['ReturnValues'] == 'ALL_NEW':
+            return {'Attributes': utils.format_item(real_item)}
+        elif args['ReturnValues'] == 'ALL_OLD':
+            return {'Attributes': item}
+
     def do_batchwriteitem(self, args):
         for _, requests in args['RequestItems'].iteritems():
             for request in requests:
