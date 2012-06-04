@@ -12,9 +12,30 @@ class TestDB(db.BaseDB):
         self.ioloop = None
         self.client = turtle.Turtle()
 
+
 class SimpleTest(TestCase):
     def test(self):
         self.db = TestDB('RhettTest', ('user', 'time'))
+
+class UpdateTest(TestCase):
+    @setup
+    def create_client(self):
+        self.db = TestDB('test db', ('user', 'day'))
+
+        def make_request(*args, **kwargs):
+            kwargs['callback']({}, error=None)
+
+        self.db.client.make_request = make_request
+
+    def test_add(self):
+        self.db.update(("rhett", "2012-01-01"), add={"counter": 1})
+
+    def test_put(self):
+        self.db.update(("rhett", "2012-01-01"), put={"scalar": 1})
+
+    def test_delete(self):
+        self.db.update(("rhett", "2012-01-01"), delete={"scalar": 1})
+
 
 class SimpleBatchTest(TestCase):
     @setup
@@ -55,7 +76,9 @@ class SimpleBatchTest(TestCase):
         d = batch.defer()
         callback = self.db.client.make_request.calls[0][1]['callback']
 
-        callback({}, error="This is a failure")
+        class Error(object):
+            data = '{"__type": ""}'
+        callback({}, error=Error())
 
         assert d.done
         for df in item_dfs:

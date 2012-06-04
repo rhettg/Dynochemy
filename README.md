@@ -59,3 +59,10 @@ And of course you do this async as well:
 
     result = yield tornado.gen.Task(db.query('123').range(t0, t1).async())
 
+One of the great features of DynamoDB is how it can do atomic counters using
+the 'update' command. Dynochemy can support that too:
+
+    db.update((hash_key, range_key), add={'counter_1': 1, 'counter_2': 1}, put={'time_modified': time.time()})
+
+This would update the indicated element (or create it if it doesn't exist),
+increment (or create) the counters and then set the time modified field.

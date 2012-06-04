@@ -9,14 +9,15 @@ import copy
 import json
 import time
 import logging
+import pprint
 
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
 from .errors import Error
 from . import utils
-from .defer import ResultErrorDefer
-from .defer import ResultErrorDefer
+from .defer import ResultErrorTupleDefer
+from .defer import ResultErrorKWDefer
 
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class BaseDB(object):
         if self.has_range:
             data['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
         else:
-            data['Key'] = utils.format_key(('HashKeyElement',), [key])
+            data['Key'] = utils.format_key(('HashKeyElement',), (key,))
 
         if attributes:
             data['AttributesToGet'] = attributes
@@ -48,12 +49,12 @@ class BaseDB(object):
 
         defer = None
         if callback is None:
-            defer = ResultErrorDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(self.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
             if error is not None:
-                callback(None, error)
+                return callback(None, error)
 
             if 'Item' in data:
                 callback(utils.parse_item(data['Item']), None)
@@ -73,10 +74,7 @@ class BaseDB(object):
         if not self.allow_sync:
             raise SyncUnallowedError()
 
-        if len(self.key_spec) > 1:
-            d = self._get(key)
-        else:
-            d = self._get((key,))
+        d = self._get(key)
 
         item, error =  d()
         if error:
@@ -99,7 +97,7 @@ class BaseDB(object):
 
         defer = None
         if callback is None:
-            defer = ResultErrorDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(self.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -139,6 +137,65 @@ class BaseDB(object):
 
     def __delitem__(self, key):
         pass
+
+    def _update(self, key, add=None, put=None, delete=None, callback=None):
+        data = {
+                'TableName': self.name,
+                'ReturnValues': 'ALL_NEW',
+               }
+
+        if self.has_range:
+            data['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
+        else:
+            data['Key'] = utils.format_key(('HashKeyElement',), [key])
+
+        data['AttributeUpdates'] = {}
+
+        if add:
+            for attribute, value in add.iteritems():
+                update = {attribute: {'Value': utils.format_value(value), 'Action': 'ADD'}}
+                data['AttributeUpdates'].update(update)
+        if put:
+            for attribute, value in put.iteritems():
+                update = {attribute: {'Value': utils.format_value(value), 'Action': 'PUT'}}
+                data['AttributeUpdates'].update(update)
+
+        if delete:
+            for attribute, value in delete.iteritems():
+                update = {attribute: {'Value': utils.format_value(value), 'Action': 'DELETE'}}
+                data['AttributeUpdates'].update(update)
+
+        defer = None
+        if callback is None:
+            defer = ResultErrorTupleDefer(self.ioloop)
+            callback = defer.callback
+
+        def handle_result(result, error=None):
+            if error is not None:
+                callback(None, error)
+
+            callback(result, None)
+
+        self.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
+        return defer
+
+    def update(self, key, add=None, put=None, delete=None, timeout=None):
+        if not self.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._update(key, add=add, put=put, delete=delete)
+
+        result, error = d(timeout=timeout)
+        if error:
+            raise Error(error)
+
+        return result
+
+    def update_defer(self, key, add=None, put=None, delete=None, timeout=None):
+        return self._update(key, add=add, put=put, delete=delete)
+
+    def update_async(self, key, callback, add=None, put=None, delete=None):
+        return self._update(key, add=add, put=put, delete=delete, callback=callback)
 
     def scan(self):
         return Scan(self)
@@ -228,7 +285,7 @@ class Batch(object):
 
         # This defer tracks the over all status of this batch.
         # When all all 
-        self._defer = ResultErrorDefer()
+        self._defer = ResultErrorKWDefer()
 
         self.errors = []
 
@@ -302,7 +359,7 @@ class WriteBatch(Batch):
     MAX_ITEMS = 25
 
     def put(self, value):
-        df = ResultErrorDefer()
+        df = ResultErrorKWDefer()
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
         req_key = ("PutRequest", self._item_key(value))
@@ -321,7 +378,7 @@ class WriteBatch(Batch):
     def _run_batch(self, request_keys):
         log.debug("Creating BatchWrite request for %d items", len(request_keys))
 
-        batch_defer = ResultErrorDefer()
+        batch_defer = ResultErrorKWDefer()
         batch_defer.add_callback(self._batch_callback)
         self._batch_defers.append(batch_defer)
 
@@ -408,7 +465,7 @@ class Scan(object):
     def _scan(self, callback=None):
         defer = None
         if callback is None:
-            defer = ResultErrorDefer(self.db.ioloop)
+            defer = ResultErrorTupleDefer(self.db.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -490,7 +547,7 @@ class Query(object):
     def _query(self, callback=None):
         defer = None
         if callback is None:
-            defer = ResultErrorDefer(self.db.ioloop)
+            defer = ResultErrorTupleDefer(self.db.ioloop)
             callback = defer.callback
 
         def handle_result(result_data, error=None):

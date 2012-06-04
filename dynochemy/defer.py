@@ -25,6 +25,9 @@ class Defer(object):
         self._callbacks.append(cb)
 
     def callback(self, *args, **kwargs):
+        if self.done:
+            raise ValueError("Already called")
+
         self.done = True
         self.args = args
         self.kwargs = kwargs
@@ -58,7 +61,24 @@ class Defer(object):
         return self.args, self.kwargs
 
 
-class ResultErrorDefer(Defer):
+class ResultErrorTupleDefer(Defer):
+    """Special Defer who's callback is in the form of (result, error)
+    """
+    @property
+    def result(self):
+        if len(self.args) == 2:
+            return self.args[0], self.args[1]
+        elif len(self.args) == 1:
+            return self.args[0], None
+        else:
+            raise ValueError(self.args)
+
+
+class ResultErrorKWDefer(Defer):
+    """Special defer who's callback is in the form (result, error=ERROR)
+
+    It will return a tuple of (result, error)
+    """
     @property
     def result(self):
         if self.args:
