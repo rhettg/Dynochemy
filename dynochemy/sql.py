@@ -16,6 +16,7 @@ from dynochemy import db
 from dynochemy import errors
 from dynochemy import utils
 
+DEFAULT_LIMIT = 100
 
 def create_db(db_name, metadata, has_range_key=True):
     if has_range_key:
@@ -203,10 +204,9 @@ class SQLClient(object):
         return out
 
     def do_query(self, args):
-        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead', 'RangeKeyCondition', 'AttributesToGet']) 
+        unsupported_keys = set(args.keys()) - set(['Limit', 'TableName', 'HashKeyValue', 'ScanIndexForward', 'ConsistentRead', 'RangeKeyCondition', 'AttributesToGet', 'ExclusiveStartKey']) 
         if unsupported_keys:
             raise NotImplementedError(unsupported_keys)
-
 
         scan_forward = args.get('ScanIndexForward', True)
 
@@ -239,10 +239,21 @@ class SQLClient(object):
                 else:
                     raise NotImplementedError
 
+        if 'ExclusiveStartKey' in args:
+            range_key = utils.parse_value(args['ExclusiveStartKey']['RangeKeyElement'])
+            if scan_forward:
+                expr = sql.and_(expr, self.table.c.range_key > range_key)
+            else:
+                expr = sql.and_(expr, self.table.c.range_key < range_key)
 
         q = sql.select([self.table], expr)
+
+        default_limit = False
         if 'Limit' in args:
             q = q.limit(args['Limit'])
+        else:
+            default_limit = True
+            q = q.limit(DEFAULT_LIMIT + 1)
 
         if len(self.key_spec) > 1:
             if scan_forward:
@@ -250,7 +261,7 @@ class SQLClient(object):
             else:
                 q = q.order_by(self.table.c.range_key.desc())
 
-        out = {'Items': []}
+        out = {'Items': [], 'Count': 0}
         for res in self.engine.execute(q):
             item_data = json.loads(res[self.table.c.content])
             item = utils.parse_item(item_data)
@@ -259,6 +270,13 @@ class SQLClient(object):
                 out['Items'].append(out_item)
             else:
                 out['Items'].append(item_data)
+            out['Count'] += 1
+
+            if default_limit and out['Count'] == DEFAULT_LIMIT:
+                out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[self.table.c.hash_key], 'RangeKeyElement': res[self.table.c.range_key]})
+                break
+
+        out['Count'] = len(out['Items'])
 
         return out
 

@@ -213,7 +213,7 @@ class BaseDB(object):
 
     def query_next(self, result):
         if not result.has_next:
-            raise ValueError("Result has no more")
+            return None
 
         query = copy.copy(result.query)
         query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
