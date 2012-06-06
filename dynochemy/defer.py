@@ -88,6 +88,7 @@ class ResultErrorKWDefer(Defer):
 
 
 def wait_all(all_deferred, timeout=None):
+
     ioloop = all_deferred[0].ioloop
 
     timeout_req = None
@@ -105,9 +106,14 @@ def wait_all(all_deferred, timeout=None):
         if len(all_deferred) == 0:
             if timeout_req:
                 ioloop.remove_timeout(timeout_req)
-            ioloop.stop()
+            if ioloop: 
+                ioloop.stop()
+
+    done_defer = [d for d in all_deferred if d.done]
+    [callback(d) for d in done_defer]
 
     for d in all_deferred:
         d.add_callback(callback)
 
-    ioloop.start()
+    if all_deferred:
+        ioloop.start()
