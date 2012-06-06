@@ -135,8 +135,57 @@ class BaseDB(object):
         if error:
             raise Error(error)
 
+    def _delete(self, key, callback=None):
+        data = {
+                'TableName': self.name,
+               }
+
+        if self.has_range:
+            data['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
+        else:
+            data['Key'] = utils.format_key(('HashKeyElement',), (key,))
+
+        data['ReturnValues'] = "ALL_OLD"
+
+        defer = None
+        if callback is None:
+            defer = ResultErrorTupleDefer(self.ioloop)
+            callback = defer.callback
+
+        def handle_result(data, error=None):
+            if error is not None:
+                return callback(None, error)
+
+            if 'Attributes' in data:
+                callback(utils.parse_item(data['Attributes']), None)
+            else:
+                callback(None, None)
+
+        self.client.make_request('DeleteItem', body=json.dumps(data), callback=handle_result)
+        return defer
+
+    def delete_async(self, key, callback):
+        self._delete(key, callback=callback)
+
+    def delete_defer(self, key):
+        return self._delete(key)
+
     def __delitem__(self, key):
-        pass
+        if not self.allow_sync:
+            raise SyncUnallowedError()
+
+        d = self._delete(key)
+
+        item, error =  d()
+        if error:
+            raise Error(error)
+
+        if item is None:
+            raise KeyError(key)
+
+        return item
+
+    delete = __delitem__
 
     def _update(self, key, add=None, put=None, delete=None, callback=None):
         data = {
@@ -321,7 +370,7 @@ class Batch(object):
 
             self._defer.callback(None, error=deferred.kwargs['error'])
         else:
-            if len(self._batch_defers) == 0:
+            if len(self._batch_defers) == 0 and not self._defer.done:
                 # And we're done. We don't have any data to provide though.
                 self._defer.callback(None)
 
