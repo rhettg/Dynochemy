@@ -334,12 +334,12 @@ class Batch(object):
 
         # This defer tracks the over all status of this batch.
         # When all all 
-        self._defer = ResultErrorKWDefer()
+        self._defer = ResultErrorKWDefer(ioloop=self.db.ioloop)
 
         self.errors = []
 
     def __call__(self, timeout=None):
-        d = self.run()
+        d = self._run()
         return d()
 
     def async(self, callback=None):
@@ -408,7 +408,7 @@ class WriteBatch(Batch):
     MAX_ITEMS = 25
 
     def put(self, value):
-        df = ResultErrorKWDefer()
+        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
         req_key = ("PutRequest", self._item_key(value))
@@ -422,12 +422,29 @@ class WriteBatch(Batch):
         return df
 
     def delete(self, key):
-        raise NotImplementedError
+        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        req_args = {}
+        if self.db.has_range:
+            req_args['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
+        else:
+            req_args['Key'] = utils.format_key(('HashKeyElement',), (key,))
+
+        args = {'DeleteRequest': req_args}
+
+        req_key = ("DeleteRequest", key)
+
+        log.debug("Building request %r", req_key)
+
+        self._request_defer[req_key] = df
+        self._request_data[req_key] = args
+        self._requests.append(req_key)
+
+        return df
 
     def _run_batch(self, request_keys):
         log.debug("Creating BatchWrite request for %d items", len(request_keys))
 
-        batch_defer = ResultErrorKWDefer()
+        batch_defer = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         batch_defer.add_callback(self._batch_callback)
         self._batch_defers.append(batch_defer)
 
