@@ -106,6 +106,24 @@ class SQLClient(object):
 
         self._put_item(item_data)
 
+    def do_deleteitem(self, args):
+        if len(self.key_spec) > 1:
+            expr = sql.and_(self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement']), 
+                              self.table.c.range_key == utils.parse_value(args['Key']['RangeKeyElement']))
+        else:
+            expr = self.table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement'])
+
+        item = self.do_getitem(args)
+
+        del_q = self.table.delete().where(expr)
+        res = self.engine.execute(del_q)
+
+        out = {
+            'Attributes': item['Item']
+        }
+
+        return out
+
     def do_updateitem(self, args):
         if 'Expected' in args:
             raise NotImplementedError
@@ -164,12 +182,12 @@ class SQLClient(object):
         for _, requests in args['RequestItems'].iteritems():
             for request in requests:
                 req_type = request.keys()[0]
-                item = request[req_type]['Item']
+                args = request[req_type]
 
                 if req_type == "PutRequest":
-                    self._put_item(item)
+                    self._put_item(args['Item'])
                 elif req_type == "DeleteRequest":
-                    raise NotImplementedError
+                    self.do_deleteitem(args)
                 else:
                     raise NotImplementedError
 
