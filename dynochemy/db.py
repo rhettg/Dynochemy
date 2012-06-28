@@ -546,10 +546,10 @@ class WriteBatch(Batch):
 
 
 class Scan(object):
-    def __init__(self, db):
-        self.db = db
+    def __init__(self, table):
+        self.table = table
         self.args = {
-                     'TableName': self.db.name, 
+                     'TableName': self.table.name, 
                     }
 
     def limit(self, limit):
@@ -579,7 +579,7 @@ class Scan(object):
     def _scan(self, callback=None):
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.db.ioloop)
+            defer = ResultErrorTupleDefer(self.table.db.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -588,11 +588,11 @@ class Scan(object):
 
             callback(ScanResults(self, data), None)
 
-        self.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
+        self.table.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
         return defer
 
     def __call__(self, timeout=None):
-        if not self.db.allow_sync:
+        if not self.table.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._scan()
@@ -610,10 +610,10 @@ class Scan(object):
 
 
 class Query(object):
-    def __init__(self, db, hash_key):
-        self.db = db
+    def __init__(self, table, hash_key):
+        self.table = table 
         self.args = {
-                     'TableName': self.db.name, 
+                     'TableName': self.table.name, 
                      'HashKeyValue': utils.format_value(hash_key),
                      'ConsistentRead': True,
                     }
@@ -627,7 +627,7 @@ class Query(object):
         """Includes a condition where by range keys start at 'start' (inclusive) and are less than 'end' (exclusive)
         
         """
-        if not self.db.has_range:
+        if not self.table.range_key:
             raise ValueError("Must have range")
 
         query = copy.copy(self)
@@ -661,7 +661,7 @@ class Query(object):
     def _query(self, callback=None):
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.db.ioloop)
+            defer = ResultErrorTupleDefer(self.talbe.db.ioloop)
             callback = defer.callback
 
         def handle_result(result_data, error=None):
@@ -671,11 +671,11 @@ class Query(object):
 
             return callback(results, error)
 
-        self.db.client.make_request('Query', body=json.dumps(self.args), callback=handle_result)
+        self.table.db.client.make_request('Query', body=json.dumps(self.args), callback=handle_result)
         return defer
 
     def __call__(self, timeout=None):
-        if not self.db.allow_sync:
+        if not self.table.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._query()
