@@ -76,7 +76,7 @@ class SimpleBatchTest(TestCase):
         batch = self.db.batch_write()
         item_dfs = []
         for item in self.items:
-            item_dfs.append(batch.put(item))
+            item_dfs.append(batch.TestTable.put(item))
 
         d = batch.defer()
         assert_equal(len(self.db.client.make_request.calls), 1)
@@ -93,7 +93,7 @@ class SimpleBatchTest(TestCase):
         batch = self.db.batch_write()
         item_dfs = []
         for item in self.items:
-            item_dfs.append(batch.put(item))
+            item_dfs.append(batch.TestTable.put(item))
 
         d = batch.defer()
         callback = self.db.client.make_request.calls[0][1]['callback']
@@ -136,7 +136,7 @@ class MultipleBatchesTest(TestCase):
 
         item_dfs = []
         for item in self.items:
-            item_dfs.append(batch.put(item))
+            item_dfs.append(batch.TestTable.put(item))
 
         d = batch.defer()
         assert_equal(len(self.db.client.make_request.calls), 2)

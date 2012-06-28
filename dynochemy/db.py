@@ -10,6 +10,7 @@ import json
 import time
 import logging
 import pprint
+import collections
 
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
@@ -33,12 +34,18 @@ class BaseDB(object):
 
     def register(self, table, create=False):
         self.tables[table.__name__] = table
+
     def __getattr__(self, name):
         try:
             return self.tables[name](self)
         except KeyError:
             raise AttributeError
 
+    def batch_write(self):
+        return WriteBatch(self)
+
+    def batch_read(self):
+        return ReadBatch(self)
 
 
 class DB(BaseDB):
@@ -57,6 +64,13 @@ class Table(object):
 
     def __init__(self, db):
         self.db = db
+
+    @property
+    def key_spec(self):
+        if self.range_key:
+            return (self.hash_key, self.range_key)
+        else:
+            return (self.hash_key,)
 
     def _get(self, key, attributes=None, consistent=True, callback=None):
         data = {
@@ -296,14 +310,21 @@ class Table(object):
         query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
         return query
 
-    def batch_write(self):
-        return WriteBatch(self)
-
-    def batch_read(self):
-        return ReadBatch(self)
-
     def has_range(self):
         return bool(len(self.key_spec) == 2)
+
+    def _item_key(self, item):
+        """Return a tuple of identifying information for the item.
+
+        This is based on the keys."""
+        key = [item[k] for k in self.key_spec]
+        return tuple(key)
+
+    def _key_key(self, key):
+        """Return a tuple of identifying information for the parsed key"""
+
+        return (key['HashKeyElement'], key['RangeKeyElement'])
+
 
 
 
@@ -410,38 +431,45 @@ class Batch(object):
 
         return self._defer
 
-    def _item_key(self, item):
-        """Return a tuple of identifying information for the item.
 
-        This is based on the keys."""
-        key = [item[k] for k in self.db.key_spec]
-        return tuple(key)
 
-    def _key_key(self, key):
-        """Return a tuple of identifying information for the parsed key"""
+class BatchTable(object):
+    def __init__(self, batch, table):
+        self.table = table
+        self.batch = batch
 
-        return (key['HashKeyElement'], key['RangeKeyElement'])
+    def put(self, value):
+        return self.batch.put(self.table, value)
 
+    def delete(self, key):
+        return self.batch.delete(self.table, value)
 
 
 class WriteBatch(Batch):
     MAX_ITEMS = 25
 
-    def put(self, value):
+    def __getattr__(self, name):
+        if hasattr(self.db, name):
+            tbl = getattr(self.db, name)
+            return BatchTable(self, tbl)
+        else:
+            raise AttributeError
+
+    def put(self, table, value):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
-        req_key = ("PutRequest", self._item_key(value))
+        req_key = ("PutRequest", table._item_key(value))
 
         log.debug("Building request %r", req_key)
 
         self._request_defer[req_key] = df
-        self._request_data[req_key] = args
+        self._request_data[req_key] = (table.name, args)
         self._requests.append(req_key)
 
         return df
 
-    def delete(self, key):
+    def delete(self, table, key):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         req_args = {}
         if self.db.has_range:
@@ -456,7 +484,7 @@ class WriteBatch(Batch):
         log.debug("Building request %r", req_key)
 
         self._request_defer[req_key] = df
-        self._request_data[req_key] = args
+        self._request_data[req_key] = (table.name, args)
         self._requests.append(req_key)
 
         return df
@@ -468,11 +496,11 @@ class WriteBatch(Batch):
         batch_defer.add_callback(self._batch_callback)
         self._batch_defers.append(batch_defer)
 
-        request_data = []
-        args = {"RequestItems": {self.db.name: request_data}}
+        args = {"RequestItems": {}}
 
         for key in request_keys:
-            request_data.append(self._request_data[key])
+            table_name, req = self._request_data[key]
+            args['RequestItems'].setdefault(table_name, []).append(req)
 
         def handle_result(data, error=None):
             if error is not None:
