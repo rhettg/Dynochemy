@@ -89,6 +89,9 @@ class ResultErrorKWDefer(Defer):
 
 def wait_all(all_deferred, timeout=None):
 
+    if len(all_deferred) == 0:
+        return
+
     ioloop = all_deferred[0].ioloop
 
     timeout_req = None

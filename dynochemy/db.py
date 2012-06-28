@@ -26,11 +26,37 @@ class SyncUnallowedError(Error): pass
 
 
 class BaseDB(object):
-    def __init__(self, name, key_spec):
-        self.name = name
-        self.key_spec = key_spec
+    def __init__(self):
         self.allow_sync = True
         self.ioloop = None
+        self.tables = {}
+
+    def register(self, table, create=False):
+        self.tables[table.__name__] = table
+    def __getattr__(self, name):
+        try:
+            return self.tables[name](self)
+        except KeyError:
+            raise AttributeError
+
+
+
+class DB(BaseDB):
+    def __init__(self, access_key, access_secret, ioloop=None):
+        super(DB, self).__init__()
+
+        self.allow_sync = bool(ioloop is None)
+        self.ioloop = ioloop or IOLoop()
+        self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
+
+
+class Table(object):
+    name = None
+    hash_key = None
+    range_key = None
+
+    def __init__(self, db):
+        self.db = db
 
     def _get(self, key, attributes=None, consistent=True, callback=None):
         data = {
@@ -49,7 +75,7 @@ class BaseDB(object):
 
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(self.db.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -61,7 +87,7 @@ class BaseDB(object):
             else:
                 callback(None, None)
 
-        self.client.make_request('GetItem', body=json.dumps(data), callback=handle_result)
+        self.db.client.make_request('GetItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def get_async(self, key, callback, attributes=None, consistent=True):
@@ -71,7 +97,7 @@ class BaseDB(object):
         return self._get(key, attributes=attributes, consistent=consistent)
 
     def __getitem__(self, key):
-        if not self.allow_sync:
+        if not self.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._get(key)
@@ -97,7 +123,7 @@ class BaseDB(object):
 
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(self.db.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -106,7 +132,7 @@ class BaseDB(object):
 
             callback(None, None)
 
-        self.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
+        self.db.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def put_async(self, value, callback):
@@ -126,7 +152,7 @@ class BaseDB(object):
         self.put(item)
 
     def put(self, value, timeout=None):
-        if not self.allow_sync:
+        if not self.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._put(value)
@@ -149,7 +175,7 @@ class BaseDB(object):
 
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(self.db.ioloop)
             callback = defer.callback
 
         def handle_result(data, error=None):
@@ -161,7 +187,7 @@ class BaseDB(object):
             else:
                 callback(None, None)
 
-        self.client.make_request('DeleteItem', body=json.dumps(data), callback=handle_result)
+        self.db.client.make_request('DeleteItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def delete_async(self, key, callback):
@@ -171,7 +197,7 @@ class BaseDB(object):
         return self._delete(key)
 
     def __delitem__(self, key):
-        if not self.allow_sync:
+        if not self.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._delete(key)
@@ -211,12 +237,14 @@ class BaseDB(object):
 
         if delete:
             for attribute, value in delete.iteritems():
-                update = {attribute: {'Value': utils.format_value(value), 'Action': 'DELETE'}}
+                update = {attribute: {'Action': 'DELETE'}}
+                if value is not None:
+                    update[attribute]['Value'] = utils.format_value(value)
                 data['AttributeUpdates'].update(update)
 
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.ioloop)
+            defer = ResultErrorTupleDefer(ioloop=self.db.ioloop)
             callback = defer.callback
 
         def handle_result(result, error=None):
@@ -225,11 +253,11 @@ class BaseDB(object):
 
             callback(result, None)
 
-        self.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
+        self.db.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def update(self, key, add=None, put=None, delete=None, timeout=None):
-        if not self.allow_sync:
+        if not self.db.allow_sync:
             raise SyncUnallowedError()
 
         d = self._update(key, add=add, put=put, delete=delete)
@@ -277,14 +305,6 @@ class BaseDB(object):
     def has_range(self):
         return bool(len(self.key_spec) == 2)
 
-
-class DB(BaseDB):
-    def __init__(self, name, key_spec, access_key, access_secret, ioloop=None):
-        super(DB, self).__init__(name, key_spec)
-
-        self.allow_sync = bool(ioloop is None)
-        self.ioloop = ioloop or IOLoop()
-        self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
 
 
 class Batch(object):

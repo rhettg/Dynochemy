@@ -2,11 +2,11 @@ import time
 import pprint
 
 from testify import *
-from dynochemy import db
+from dynochemy import db, Table
 
 class TestDB(db.BaseDB):
-    def __init__(self, name, key_spec):
-        super(TestDB, self).__init__(name, key_spec)
+    def __init__(self):
+        super(TestDB, self).__init__()
 
         self.allow_sync = True
         self.ioloop = None
@@ -15,12 +15,27 @@ class TestDB(db.BaseDB):
 
 class SimpleTest(TestCase):
     def test(self):
-        self.db = TestDB('RhettTest', ('user', 'time'))
+        self.db = TestDB()
+
+        class TestTable(Table):
+            name = "test"
+            hash_key = 'user'
+            range_key = 'time'
+
+        self.db.register(TestTable)
+        
 
 class UpdateTest(TestCase):
     @setup
     def create_client(self):
-        self.db = TestDB('test db', ('user', 'day'))
+        self.db = TestDB()
+
+        class TestTable(Table):
+            name = "test"
+            hash_key = 'user'
+            range_key = 'day'
+
+        self.db.register(TestTable)
 
         def make_request(*args, **kwargs):
             kwargs['callback']({}, error=None)
@@ -28,19 +43,26 @@ class UpdateTest(TestCase):
         self.db.client.make_request = make_request
 
     def test_add(self):
-        self.db.update(("rhett", "2012-01-01"), add={"counter": 1})
+        self.db.TestTable.update(("rhett", "2012-01-01"), add={"counter": 1})
 
     def test_put(self):
-        self.db.update(("rhett", "2012-01-01"), put={"scalar": 1})
+        self.db.TestTable.update(("rhett", "2012-01-01"), put={"scalar": 1})
 
     def test_delete(self):
-        self.db.update(("rhett", "2012-01-01"), delete={"scalar": 1})
+        self.db.TestTable.update(("rhett", "2012-01-01"), delete={"scalar": 1})
 
 
 class SimpleBatchTest(TestCase):
     @setup
     def build_db(self):
-        self.db = TestDB('RhettTest', ('user', 'time'))
+        self.db = TestDB()
+
+        class TestTable(Table):
+            name = "test"
+            hash_key = 'user'
+            range_key = 'time'
+
+        self.db.register(TestTable)
 
     @setup
     def build_items(self):
@@ -91,7 +113,14 @@ class SimpleBatchTest(TestCase):
 class MultipleBatchesTest(TestCase):
     @setup
     def build_db(self):
-        self.db = TestDB('RhettTest', ('user', 'time'))
+        self.db = TestDB()
+
+        class TestTable(Table):
+            name = "test"
+            hash_key = 'user'
+            range_key = 'time'
+
+        self.db.register(TestTable)
 
     @setup
     def build_items(self):
