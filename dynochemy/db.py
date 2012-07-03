@@ -460,6 +460,8 @@ class WriteBatch(Batch):
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
         req_key = ("PutRequest", table._item_key(value))
+        if req_key in self._request_defer:
+            raise ValueError("Key %r already in batch", req_key)
 
         log.debug("Building request %r", req_key)
 
@@ -661,7 +663,7 @@ class Query(object):
     def _query(self, callback=None):
         defer = None
         if callback is None:
-            defer = ResultErrorTupleDefer(self.talbe.db.ioloop)
+            defer = ResultErrorTupleDefer(self.table.db.ioloop)
             callback = defer.callback
 
         def handle_result(result_data, error=None):
