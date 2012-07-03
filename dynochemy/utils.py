@@ -17,12 +17,12 @@ def format_value(value):
         return {'S': value}
     elif isinstance(value, (int, float)):
         return {'N': repr(value)}
-    elif isinstance(list, tuple):
+    elif isinstance(value, (list, tuple)):
         all_values = [format_value(v) for v in value]
         spec = ""
         values = []
         for value_spec in all_values:
-            spec.append(value_spec.keys()[0])
+            spec += value_spec.keys()[0]
             values.append(value_spec.values()[0])
         return {spec: values}
     else:
