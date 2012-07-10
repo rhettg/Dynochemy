@@ -31,15 +31,20 @@ class BaseDB(object):
         self.allow_sync = True
         self.ioloop = None
         self.tables = {}
+        self._tables_by_db_name = {}
 
     def register(self, table, create=False):
         self.tables[table.__name__] = table
+        self._tables_by_db_name[table.name] = table
 
     def __getattr__(self, name):
         try:
             return self.tables[name](self)
         except KeyError:
             raise AttributeError
+
+    def table_by_name(self, name):
+        return self._tables_by_db_name[name](self)
 
     def batch_write(self):
         return WriteBatch(self)
@@ -379,6 +384,13 @@ class Batch(object):
 
         self.errors = []
 
+    def __getattr__(self, name):
+        if hasattr(self.db, name):
+            tbl = getattr(self.db, name)
+            return BatchTable(self, tbl)
+        else:
+            raise AttributeError
+
     def __call__(self, timeout=None):
         d = self._run()
         return d()
@@ -442,24 +454,20 @@ class BatchTable(object):
         return self.batch.put(self.table, value)
 
     def delete(self, key):
-        return self.batch.delete(self.table, value)
+        return self.batch.delete(self.table, key)
+
+    def get(self, key):
+        return self.batch.get(self.table, key)
 
 
 class WriteBatch(Batch):
     MAX_ITEMS = 25
 
-    def __getattr__(self, name):
-        if hasattr(self.db, name):
-            tbl = getattr(self.db, name)
-            return BatchTable(self, tbl)
-        else:
-            raise AttributeError
-
     def put(self, table, value):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
-        req_key = ("PutRequest", table._item_key(value))
+        req_key = (table.name, "PutRequest", table._item_key(value))
         if req_key in self._request_defer:
             raise ValueError("Key %r already in batch", req_key)
 
@@ -474,14 +482,14 @@ class WriteBatch(Batch):
     def delete(self, table, key):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         req_args = {}
-        if self.db.has_range:
+        if table.has_range:
             req_args['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
         else:
             req_args['Key'] = utils.format_key(('HashKeyElement',), (key,))
 
         args = {'DeleteRequest': req_args}
 
-        req_key = ("DeleteRequest", key)
+        req_key = (table.name, "DeleteRequest", key)
 
         log.debug("Building request %r", req_key)
 
@@ -491,8 +499,8 @@ class WriteBatch(Batch):
 
         return df
 
-    def _run_batch(self, request_keys):
-        log.debug("Creating BatchWrite request for %d items", len(request_keys))
+    def _run_batch(self, requests):
+        log.debug("Creating BatchWrite request for %d items", len(requests))
 
         batch_defer = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         batch_defer.add_callback(self._batch_callback)
@@ -500,7 +508,7 @@ class WriteBatch(Batch):
 
         args = {"RequestItems": {}}
 
-        for key in request_keys:
+        for key in requests:
             table_name, req = self._request_data[key]
             args['RequestItems'].setdefault(table_name, []).append(req)
 
@@ -508,7 +516,7 @@ class WriteBatch(Batch):
             if error is not None:
                 log.error("Received error for batch: %r", error)
 
-                for key in request_keys:
+                for key in requests:
                     self._request_defer[key].callback(None, error=error)
 
                 self.errors.append(error)
@@ -518,32 +526,117 @@ class WriteBatch(Batch):
 
                 unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
-                    for tbl, unprocessed_items in data['UnprocessedItems'].iteritems():
-
-                        assert tbl == self.db.name
-
+                    for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
+                        table = self.db.table_for_name(table_name)
                         for item in unprocessed_items:
                             (req_type, req), = item.items()
-                            key = self._item_key(utils.parse_item(req['Item']))
-                            req_key = (req_type, key)
+                            key = table._key_key(item['Key'])
+                            request = (table_name, req_type, key)
 
-                            if req_key not in self._request_data:
-                                log.warning("%r not found in %r", req_key, self._request_data.keys())
+                            if request not in self._request_data:
+                                log.warning("%r not found in %r", request, self._request_data.keys())
+                                continue
 
-                            assert req_key in self._request_data
-                            unprocessed_keys.add(req_key)
-                            self._requests.append(req_key)
+                            assert request in self._request_data
+                            unprocessed_keys.add(request)
+                            self._requests.append(request)
 
                 if unprocessed_keys:
                     log.warning("Found %d keys unprocessed", len(unprocessed_keys))
 
-                for key in request_keys:
+                for key in requests:
                     if key not in unprocessed_keys:
                         self._request_defer[key].callback(data)
 
                 batch_defer.callback(data)
 
         self.db.client.make_request('BatchWriteItem', body=json.dumps(args), callback=handle_result)
+        return batch_defer
+
+
+class ReadBatch(Batch):
+    MAX_ITEMS = 100
+
+    def get(self, table, key):
+        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        if table.has_range:
+            req_key = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
+        else:
+            req_key = utils.format_key(('HashKeyElement',), (key,))
+
+        log.debug("Building request %r", req_key)
+
+        request = (table.name, key)
+
+        self._request_defer[request] = df
+        self._request_data[request] = (table.name, req_key)
+        self._requests.append(request)
+
+        return df
+
+    def _run_batch(self, requests):
+        log.debug("Creating ReadBatch request for %d items", len(requests))
+
+        batch_defer = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        batch_defer.add_callback(self._batch_callback)
+        self._batch_defers.append(batch_defer)
+
+        args = {"RequestItems": {}}
+
+        for request in requests:
+            table_name, key = self._request_data[request]
+            args['RequestItems'].setdefault(table_name, {'Keys': []})['Keys'].append(key)
+
+        def handle_result(data, error=None):
+            if error is not None:
+                log.error("Received error for batch: %r", error)
+
+                for request in requests:
+                    self._request_defer[request].callback(None, error=error)
+
+                self.errors.append(error)
+                batch_defer.callback(None, error=error)
+            else:
+                log.debug("Received successful result from batch: %r", data)
+
+                unprocessed_keys = set()
+                if data.get('UnprocessedItems'):
+                    for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
+                        table = self.db.table_by_name(table_name)
+
+                        for req_key in unprocessed_items['Keys']:
+                            key = table._key_key(req_key)
+                            request = (table_name, key)
+
+                            if request not in self._request_data:
+                                log.warning("%r not found in %r", request, self._request_data.keys())
+                                continue
+
+                            assert request in self._request_data
+                            unprocessed_keys.add(request)
+                            self._requests.append(request)
+
+                if unprocessed_keys:
+                    log.warning("Found %d keys unprocessed", len(unprocessed_keys))
+
+                # Extract all the items out of the response. This is slightly complicated because we need
+                # to reconstitute what there request identifier must be (table name, (..key..))
+                found_entities = {}
+                for table_name, result in data.iteritems():
+                    for item in result['Items']:
+                        table = self.db.table_by_name(table_name)
+                        entity = utils.parse_item(item)
+                        key = table._item_key(entity)
+                        request = (table_name, key)
+                        found_entities[request] = entity
+
+                for request in requests:
+                    if request not in unprocessed_keys:
+                        self._request_defer[request].callback(found_entities[request])
+
+                batch_defer.callback(data)
+
+        self.db.client.make_request('BatchGetItem', body=json.dumps(args), callback=handle_result)
         return batch_defer
 
 

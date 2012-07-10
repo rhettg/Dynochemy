@@ -73,26 +73,34 @@ class SQLClient(object):
             'key_spec': key_spec
         }
 
-    def do_getitem(self, args):
-        table_spec = self.tables[args['TableName']]
+    def _get_item(self, table_name, key):
+        table_spec = self.tables[table_name]
         sql_table = table_spec['sql_table']
         table_def = table_spec['table_def']
 
         if table_def.range_key:
-            expr = sql.and_(sql_table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement']), 
-                              sql_table.c.range_key == utils.parse_value(args['Key']['RangeKeyElement']))
+            expr = sql.and_(sql_table.c.hash_key == utils.parse_value(key['HashKeyElement']), 
+                              sql_table.c.range_key == utils.parse_value(key['RangeKeyElement']))
         else:
-            expr = sql_table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement'])
+            expr = sql_table.c.hash_key == utils.parse_value(key['HashKeyElement'])
 
         q = sql.select([sql_table], expr)
         try:
             res = list(self.engine.execute(q))[0]
         except IndexError:
-            out = {}
+            return None
         else:
+            return json.loads(res[sql_table.c.content])
+
+    def do_getitem(self, args):
+        item = self._get_item(args['TableName'], args['Key'])
+
+        if item:
             out = {
-                'Item': json.loads(res[sql_table.c.content])
+                'Item': item
             }
+        else:
+            out = {}
 
         return out
 
@@ -223,6 +231,17 @@ class SQLClient(object):
                     raise NotImplementedError
 
         return {}
+
+    def do_batchgetitem(self, args):
+        out = {}
+        for table_name, requests in args['RequestItems'].iteritems():
+            out.setdefault(table_name, {'Items': []})
+            for key in requests['Keys']:
+                # TODO: This would probably be nice as a better multi-key query
+                item = self._get_item(table_name, key)
+                out[table_name]['Items'].append(item)
+
+        return out
 
     def do_scan(self, args):
         table_spec = self.tables[args['TableName']]
