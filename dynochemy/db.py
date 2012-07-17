@@ -15,15 +15,13 @@ import collections
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
-from .errors import Error
+from .errors import Error, SyncUnallowedError, DuplicateBatchItemError
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
 
 
 log = logging.getLogger(__name__)
-
-class SyncUnallowedError(Error): pass
 
 
 class BaseDB(object):
@@ -469,7 +467,7 @@ class WriteBatch(Batch):
 
         req_key = (table.name, "PutRequest", table._item_key(value))
         if req_key in self._request_defer:
-            raise ValueError("Key %r already in batch", req_key)
+            raise DuplicateBatchItemError(value)
 
         log.debug("Building request %r", req_key)
 

@@ -23,4 +23,4 @@ from . import utils
 from .db import DB
 from .db import Table
 from .sql import SQLDB
-from .errors import Error
+from .errors import *
