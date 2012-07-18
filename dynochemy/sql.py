@@ -239,7 +239,8 @@ class SQLClient(object):
             for key in requests['Keys']:
                 # TODO: This would probably be nice as a better multi-key query
                 item = self._get_item(table_name, key)
-                out[table_name]['Items'].append(item)
+                if item:
+                    out[table_name]['Items'].append(item)
 
         return out
 

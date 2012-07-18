@@ -623,6 +623,7 @@ class ReadBatch(Batch):
                 for table_name, result in data.iteritems():
                     for item in result['Items']:
                         table = self.db.table_by_name(table_name)
+                        assert item
                         entity = utils.parse_item(item)
                         key = table._item_key(entity)
                         request = (table_name, key)
@@ -630,7 +631,10 @@ class ReadBatch(Batch):
 
                 for request in requests:
                     if request not in unprocessed_keys:
-                        self._request_defer[request].callback(found_entities[request])
+                        if request in found_entities:
+                            self._request_defer[request].callback(found_entities[request])
+                        else:
+                            self._request_defer[request].callback(None, error=KeyError())
 
                 batch_defer.callback(data)
 
