@@ -755,6 +755,11 @@ class Query(object):
         query.args['Limit'] = limit
         return query
 
+    def last_seen(self, range_id):
+        query = copy.copy(self)
+        query.args['ExclusiveStartKey'] = {'HashKeyElement': self.args['HashKeyValue'], 'RangeKeyElement': utils.format_value(range_id)}
+        return query
+
     def _query(self, callback=None):
         defer = None
         if callback is None:
