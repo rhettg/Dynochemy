@@ -268,7 +268,11 @@ class Table(object):
             if error is not None:
                 callback(None, error)
 
-            callback(result, None)
+
+            if 'Attributes' in result:
+                callback(utils.parse_item(result['Attributes']), None)
+            else:
+                callback(None, None)
 
         self.db.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -430,6 +434,8 @@ class Batch(object):
 
     def _run(self):
         log.debug("Creating batches, %d requests outstanding", len(self._requests))
+        if not self._requests:
+            self._defer.callback(None)
 
         while self._requests:
             request_group = []
