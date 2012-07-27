@@ -830,3 +830,17 @@ class ScanResults(Results):
         self.scan = scan
         self.result_data = result_data
 
+def run_all(runnable):
+    while True:
+        result = runnable()
+        for res in result:
+            yield res
+
+        if result.has_next:
+            if isinstance(runnable, Scan):
+                runnable = runnable.table.scan_next(result)
+            else:
+                runnable = runnable.table.query_next(result)
+        else:
+            break
+
