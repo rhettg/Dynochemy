@@ -39,7 +39,7 @@ class BaseDB(object):
         try:
             return self.tables[name](self)
         except KeyError:
-            raise AttributeError
+            raise AttributeError(name)
 
     def table_by_name(self, name):
         return self._tables_by_db_name[name](self)
@@ -317,6 +317,7 @@ class Table(object):
         query.args['ExclusiveStartKey'] = result.result_data['LastEvaluatedKey']
         return query
 
+    @property
     def has_range(self):
         return bool(len(self.key_spec) == 2)
 
