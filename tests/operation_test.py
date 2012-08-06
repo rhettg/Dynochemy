@@ -23,7 +23,7 @@ class TestDB(db.BaseDB):
 class OperationTestCase(TestCase):
     @setup
     def build_db(self):
-        engine = sqlalchemy.create_engine("sqlite://", echo=True)
+        engine = sqlalchemy.create_engine("sqlite://")
         self.db = sql.SQLDB(engine)
         self.db.register(TestTable)
 
@@ -157,3 +157,32 @@ class DoubleSetTestCase(OperationTestCase):
         entity = self.db.TestTable.get('hello')
         assert_equal(entity['my_name'], 'slim shady')
         assert_equal(entity['count'], 5)
+
+class UpdateCombineTestCase(OperationTestCase):
+    def test_add_count(self):
+        op_1 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
+        op_2 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 4})
+
+        full_op = op_1.combine_updates(op_2)
+
+        assert_equal(full_op.put['my_name'], 'slim shady')
+        assert_equal(full_op.add['count'], 5)
+
+    def test_add_str(self):
+        op_1 = operation.UpdateOperation(TestTable, 'hello', delete={'my_name': None}, add={'count': "hello "})
+        op_2 = operation.UpdateOperation(TestTable, 'hello', delete={'my_name': None}, add={'count': "world"})
+
+        full_op = op_1.combine_updates(op_2)
+
+        assert_equal(full_op.delete['my_name'], None)
+        assert_equal(full_op.add['count'], "hello world")
+
+    def test_in_operation_set(self):
+        op_1 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
+        op_2 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 2})
+
+        full_op = reduce(operation.reduce_operations, [op_1, op_2, op_1, op_2])
+        assert isinstance(full_op, operation.OperationSet)
+        assert_equal(len(full_op.update_ops), 1)
+
+

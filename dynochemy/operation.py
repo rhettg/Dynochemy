@@ -72,32 +72,56 @@ class OperationSet(Operation):
         return op_set
 
     def add_update(self, update_op):
-        self.update_ops.append(update_op)
-        return
+        # We could keep just a list of all updates and then execute them
+        # sequentially, but updates might be easily combined if they are for the same
+        # table/key pair
 
-        # TODO: We should be able to combine updates
-        by_key = collections.defaultdict(list)
-        for op in ops + [self]:
-            if isinstance(op, UpdateOperation):
-                update_ops = by_key[(op.table, op.key)]
-                if 'add' in update_ops:
-                    for k, v in update_ops['add'].iteritems():
-                        if k in update_ops['add']:
-                            update_ops['add'][k] += v
-                        else:
-                            update_ops['add'][k] = v
-                else:
-                    update_ops[add] = op.add.copy()
-
-                update_ops.setdefault('put', {}).update(op.put)
-                update_ops.setdefault('delete', {}).update(op.delete)
+        combined_update_op = False
+        new_update_ops = []
+        for op in self.update_ops:
+            if not combined_update_op and op.table == update_op.table and op.key == update_op.key:
+                # We can combine these updates
+                new_update_ops.append(op.combine_updates(update_op))
+                combined_update_op = True
             else:
-                new_op = OperationSet.reduce([new_op])
+                new_update_ops.append(op)
+
+        if not combined_update_op:
+            new_update_ops.append(update_op)
+
+        self.update_ops = new_update_ops
+        return
 
     def run(self, db):
         self.batch_write_op.run(db)
         for op in self.update_ops:
             op.run(db)
+
+
+def combine_dicts(left_dict, right_dict, combiner=None):
+    """Utility function for combining two dictionaries (union) with a user specified 'combiner' function
+
+    Note that the default combiner just takes the value in right first, followed by left if they are truthy
+    """
+    if combiner is None:
+        def combiner(l, r):
+            return r or l
+
+    if not any((left_dict, right_dict)):
+        return {}
+
+    if not left_dict and right_dict:
+        # Swap arguments so we have some value
+        s_dict = left_dict
+        left_dict = right_dict
+        right_dict = {}
+
+    right_dict = right_dict or {}
+
+    out_dict = left_dict.copy()
+    for k, v in right_dict.iteritems():
+        out_dict[k] = combiner(left_dict.get(k), v)
+    return out_dict
 
 
 class UpdateOperation(Operation):
@@ -116,6 +140,25 @@ class UpdateOperation(Operation):
             return op_set
         else:
             raise ValueError(op)
+
+    def combine_updates(self, update_op):
+        """Combine two UpdateOperations assuming they are for the same table/key combination"""
+        assert self.table == update_op.table
+        assert self.key == update_op.key
+
+        new_update = UpdateOperation(self.table, self.key)
+
+        def add_combiner(l, r):
+            if l and r:
+                return l + r
+            else:
+                return l or r
+
+        new_update.add = combine_dicts(self.add, update_op.add, combiner=add_combiner)
+        new_update.put = combine_dicts(self.put, update_op.put)
+        new_update.delete = combine_dicts(self.delete, update_op.delete)
+
+        return new_update
 
     def run(self, db):
         return getattr(db, self.table.__name__).update(self.key, add=self.add, put=self.put, delete=self.delete)
