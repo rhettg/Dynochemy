@@ -40,7 +40,7 @@ def _parse_value_spec(type_spec, value):
 
 def format_key(key_spec, key_value):
     if len(key_spec) == 1:
-        return {key_spec[0]: format_value(key_value)}
+        return {key_spec[0]: format_value(key_value[0])}
     else:
         out_key = {}
         for key, value in zip(key_spec, key_value):
