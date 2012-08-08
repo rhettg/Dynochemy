@@ -329,15 +329,13 @@ class Table(object):
         """Return a tuple of identifying information for the item.
 
         This is based on the keys."""
-        key = [item[k] for k in self.key_spec]
+        key = [utils.parse_value(item[k]) for k in self.key_spec]
         return tuple(key)
 
     def _key_key(self, key):
         """Return a tuple of identifying information for the parsed key"""
 
-        return (key['HashKeyElement'], key['RangeKeyElement'])
-
-
+        return (utils.parse_value(key['HashKeyElement']), utils.parse_value(key['RangeKeyElement']))
 
 
 class Batch(object):
@@ -477,7 +475,7 @@ class WriteBatch(Batch):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
-        req_key = (table.name, "PutRequest", table._item_key(value))
+        req_key = (table.name, "PutRequest", table._item_key(args['PutRequest']['Item']))
         if req_key in self._request_defer:
             raise DuplicateBatchItemError(value)
 
@@ -538,10 +536,10 @@ class WriteBatch(Batch):
                 unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
                     for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
-                        table = self.db.table_for_name(table_name)
+                        table = self.db.table_by_name(table_name)
                         for item in unprocessed_items:
                             (req_type, req), = item.items()
-                            key = table._key_key(item['Key'])
+                            key = table._item_key(req['Item'])
                             request = (table_name, req_type, key)
 
                             if request not in self._request_data:
@@ -639,7 +637,7 @@ class ReadBatch(Batch):
                         table = self.db.table_by_name(table_name)
                         assert item
                         entity = utils.parse_item(item)
-                        key = table._item_key(entity)
+                        key = table._item_key(item)
                         request = (table_name, key)
                         found_entities[request] = entity
 
