@@ -7,6 +7,7 @@ This module contains the set of Dynochemy's exceptions
 :license: ISC, see LICENSE for more details.
 
 """
+import json
 
 
 class Error(Exception):
@@ -16,6 +17,18 @@ class Error(Exception):
 class SyncUnallowedError(Error): pass
 
 class DuplicateBatchItemError(Error): pass
+
+class DynamoDBError(Error): pass
+
+class ProvisionedThroughputError(DynamoDBError): pass
+
+def parse_error(raw_error):
+    """Parse the error we get out of Boto into something we can code around"""
+    error_data = json.loads(raw_error.data)
+    if 'ProvisionedThroughputExceededException' in error_data['__type']:
+        return ProvisionedThroughputError(error_data['message'])
+    else:
+        return DynamoDBError(error_data['message'], error_data['__type'])
 
 
 __all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError"]

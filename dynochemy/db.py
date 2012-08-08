@@ -15,7 +15,7 @@ import collections
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
-from .errors import Error, SyncUnallowedError, DuplicateBatchItemError
+from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, parse_error
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
@@ -97,7 +97,7 @@ class Table(object):
 
         def handle_result(data, error=None):
             if error is not None:
-                return callback(None, error)
+                return callback(None, parse_error(error))
 
             if 'Item' in data:
                 callback(utils.parse_item(data['Item']), None)
@@ -121,7 +121,7 @@ class Table(object):
 
         item, error =  d()
         if error:
-            raise Error(error)
+            raise error
 
         if item is None:
             raise KeyError(key)
@@ -145,7 +145,7 @@ class Table(object):
 
         def handle_result(data, error=None):
             if error is not None:
-                callback(None, error)
+                callback(None, parse_error(error))
             else:
                 callback(None, None)
 
@@ -176,7 +176,7 @@ class Table(object):
 
         result, error = d(timeout=timeout)
         if error:
-            raise Error(error)
+            raise error
 
     def _delete(self, key, callback=None):
         data = {
@@ -197,7 +197,7 @@ class Table(object):
 
         def handle_result(data, error=None):
             if error is not None:
-                return callback(None, error)
+                return callback(None, parse_error(error))
 
             if 'Attributes' in data:
                 callback(utils.parse_item(data['Attributes']), None)
@@ -221,7 +221,7 @@ class Table(object):
 
         item, error =  d()
         if error:
-            raise Error(error)
+            raise error
 
         if item is None:
             raise KeyError(key)
@@ -270,9 +270,8 @@ class Table(object):
 
         def handle_result(result, error=None):
             if error is not None:
-                callback(None, error)
+                callback(None, parse_error(error))
                 return
-
 
             if 'Attributes' in result:
                 callback(utils.parse_item(result['Attributes']), None)
@@ -290,7 +289,7 @@ class Table(object):
 
         result, error = d(timeout=timeout)
         if error:
-            raise Error(error)
+            raise error
 
         return result
 
@@ -423,11 +422,8 @@ class Batch(object):
         self._run()
 
         if deferred.kwargs.get('error'):
-            error = deferred.kwargs['error']
-            error_data = json.loads(error.data)
-            # TODO: We should handle this internally with some sort of exponential backoff
-            if 'ProvisionedThroughputExceededException' in error_data['__type']:
-                raise Exception('provision exceeded')
+            # TODO: If this is a ProvisionedThroughput error, it would be nice
+            # to do some additional attempts after backing off
 
             # We may have already been completed if all the requests were marked with an error.
             # On the other hand, we may have had requests that were never attempted and so this defer
@@ -528,13 +524,14 @@ class WriteBatch(Batch):
 
         def handle_result(data, error=None):
             if error is not None:
-                log.error("Received error for batch: %r", error)
+                real_error = parse_error(error)
+                log.error("Received error for batch: %r", real_error)
 
                 for key in requests:
-                    self._request_defer[key].callback(None, error=error)
+                    self._request_defer[key].callback(None, error=real_error)
 
-                self.errors.append(error)
-                batch_defer.callback(None, error=error)
+                self.errors.append(real_error)
+                batch_defer.callback(None, error=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -603,13 +600,14 @@ class ReadBatch(Batch):
 
         def handle_result(data, error=None):
             if error is not None:
-                log.error("Received error for batch: %r", error)
+                real_error = parse_error(error)
+                log.error("Received error for batch: %r", real_error)
 
                 for request in requests:
-                    self._request_defer[request].callback(None, error=error)
+                    self._request_defer[request].callback(None, error=real_error)
 
-                self.errors.append(error)
-                batch_defer.callback(None, error=error)
+                self.errors.append(real_error)
+                batch_defer.callback(None, error=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -697,7 +695,7 @@ class Scan(object):
 
         def handle_result(data, error=None):
             if error is not None:
-                callback(None, error)
+                callback(None, parse_error(error))
                 return
 
             callback(ScanResults(self, data), None)
@@ -712,7 +710,7 @@ class Scan(object):
         d = self._scan()
         data, error = d(timeout=timeout)
         if error:
-            raise Error(error)
+            raise error
 
         return data
 
@@ -787,6 +785,8 @@ class Query(object):
             results = None
             if error is None:
                 results = QueryResults(self, result_data)
+            else:
+                error = parse_error(error)
 
             return callback(results, error)
 
@@ -800,7 +800,7 @@ class Query(object):
         d = self._query()
         results, error = d(timeout=timeout)
         if error:
-            raise Error(error)
+            raise error
 
         return results
 

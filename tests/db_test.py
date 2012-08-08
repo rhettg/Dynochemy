@@ -99,7 +99,7 @@ class SimpleBatchTest(TestCase):
         callback = self.db.client.make_request.calls[0][1]['callback']
 
         class Error(object):
-            data = '{"__type": ""}'
+            data = '{"__type": "UnknownError", "message": "this is an error"}'
         callback({}, error=Error())
 
         assert d.done
