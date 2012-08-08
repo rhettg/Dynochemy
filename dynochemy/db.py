@@ -245,12 +245,16 @@ class Table(object):
 
         if add:
             for attribute, value in add.iteritems():
-                update = {attribute: {'Value': utils.format_value(value), 'Action': 'ADD'}}
-                data['AttributeUpdates'].update(update)
+                if value not in ('', None):
+                    update = {attribute: {'Value': utils.format_value(value), 'Action': 'ADD'}}
+                    data['AttributeUpdates'].update(update)
         if put:
             for attribute, value in put.iteritems():
-                update = {attribute: {'Value': utils.format_value(value), 'Action': 'PUT'}}
-                data['AttributeUpdates'].update(update)
+                if attribute in self.key_spec:
+                    raise ValueError("can't put key attributes")
+                if value not in ('', None):
+                    update = {attribute: {'Value': utils.format_value(value), 'Action': 'PUT'}}
+                    data['AttributeUpdates'].update(update)
 
         if delete:
             for attribute, value in delete.iteritems():
