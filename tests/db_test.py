@@ -143,7 +143,7 @@ class MultipleBatchesTest(TestCase):
 
         callback = self.db.client.make_request.calls[0][1]['callback']
 
-        callback({})
+        callback({}, None)
 
         assert not d.done
         # some should be done, some should not be done

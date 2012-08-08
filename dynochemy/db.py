@@ -146,8 +146,8 @@ class Table(object):
         def handle_result(data, error=None):
             if error is not None:
                 callback(None, error)
-
-            callback(None, None)
+            else:
+                callback(None, None)
 
         self.db.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -271,6 +271,7 @@ class Table(object):
         def handle_result(result, error=None):
             if error is not None:
                 callback(None, error)
+                return
 
 
             if 'Attributes' in result:
@@ -428,7 +429,11 @@ class Batch(object):
             if 'ProvisionedThroughputExceededException' in error_data['__type']:
                 raise Exception('provision exceeded')
 
-            self._defer.callback(None, error=deferred.kwargs['error'])
+            # We may have already been completed if all the requests were marked with an error.
+            # On the other hand, we may have had requests that were never attempted and so this defer
+            # is still hanging around.
+            if not self._defer.done:
+                self._defer.callback(None, error=deferred.kwargs['error'])
         else:
             if len(self._batch_defers) == 0 and not self._defer.done:
                 # And we're done. We don't have any data to provide though.
@@ -439,7 +444,7 @@ class Batch(object):
 
     def _run(self):
         log.debug("Creating batches, %d requests outstanding", len(self._requests))
-        if not self._requests:
+        if not self._requests and not self._batch_defers:
             self._defer.callback(None)
 
         while self._requests:
@@ -693,6 +698,7 @@ class Scan(object):
         def handle_result(data, error=None):
             if error is not None:
                 callback(None, error)
+                return
 
             callback(ScanResults(self, data), None)
 
