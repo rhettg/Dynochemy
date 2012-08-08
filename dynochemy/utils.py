@@ -58,8 +58,9 @@ def format_key(key_spec, key_value):
             out_key[key] = format_value(value)
         return out_key
 
+EMPTY_VALUES = ['', None, [], set(), tuple()]
 def format_item(item):
-    return dict((k, format_value(v)) for k, v in item.iteritems() if v not in ('', None))
+    return dict((k, format_value(v)) for k, v in item.iteritems() if v not in EMPTY_VALUES)
 
 def parse_value(value_spec):
     key, value = value_spec.items()[0]
