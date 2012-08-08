@@ -67,9 +67,11 @@ def parse_value(value_spec):
     if len(key) == 1:
         return _parse_value_spec(key, value)
     elif key == 'SS':
-        return set(value)
+        # Note that we could use 'sets' for these, but they are kinda awkward
+        # to deal with (and don't natively json encode)
+        return value
     elif key == 'SN':
-        return set([_parse_value_spec('N', v) for v in value])
+        return [_parse_value_spec('N', v) for v in value]
     else:
         raise ValueError(key)
 
