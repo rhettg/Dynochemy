@@ -12,17 +12,27 @@ especially for things like formatting datastructures for Dynamo.
 
 """
 
+def stringify(val):
+    if isinstance(val, bool):
+        return str(int(val))
+    return str(val)
+
 def format_value(value):
     if isinstance(value, basestring):
+        if not value:
+            raise ValueError("empty string")
         return {'S': value}
-    elif isinstance(value, (int, float)):
-        return {'N': repr(value)}
-    elif isinstance(value, (list, tuple)):
-        all_values = [format_value(v) for v in value]
-        spec = ""
+    elif isinstance(value, (int, long, float, bool)):
+        return {'N': stringify(value)}
+    elif isinstance(value, (list, tuple, set)):
+        all_values = [format_value(v) for v in set(value)]
+        spec = None 
         values = []
         for value_spec in all_values:
-            spec += value_spec.keys()[0]
+            if value_spec.keys()[0] == 'S':
+                spec = 'SS'
+            elif value_spec.keys()[0] == 'N':
+                spec = 'SN'
             values.append(value_spec.values()[0])
         return {spec: values}
     else:
@@ -39,6 +49,7 @@ def _parse_value_spec(type_spec, value):
         raise ValueError(type_spec)
 
 def format_key(key_spec, key_value):
+    assert isinstance(key_value, (list, tuple))
     if len(key_spec) == 1:
         return {key_spec[0]: format_value(key_value[0])}
     else:
@@ -54,11 +65,12 @@ def parse_value(value_spec):
     key, value = value_spec.items()[0]
     if len(key) == 1:
         return _parse_value_spec(key, value)
+    elif key == 'SS':
+        return set(value)
+    elif key == 'SN':
+        return set([_parse_value_spec('N', v) for v in value])
     else:
-        out = []
-        for type_char, sub_value in zip(list(key), list(value)):
-            out.append(_parse_value_spec(type_char, sub_value))
-        return out
+        raise ValueError(key)
 
 def parse_item(item):
     return dict((k, parse_value(v)) for k, v in item.iteritems())

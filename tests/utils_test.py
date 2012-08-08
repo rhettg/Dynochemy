@@ -22,12 +22,12 @@ class SimpleParseTestCase(TestCase):
     def test_multistring(self):
         value = {'SS': ['Rhett', 'Ziggy']}
         res = utils.parse_value(value)
-        assert_equal(res, ['Rhett', 'Ziggy'])
+        assert_equal(res, set(['Rhett', 'Ziggy']))
 
 
 class FormatKeyTestCase(TestCase):
     def test_single_string(self):
-        key = utils.format_key(('user',), 'Rhett')
+        key = utils.format_key(('user',), ('Rhett',))
         assert_equal(key, {'user': {'S': 'Rhett'}})
 
     def test_multi_string(self):
