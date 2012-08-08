@@ -398,7 +398,10 @@ class Batch(object):
 
     def __call__(self, timeout=None):
         d = self._run()
-        return d()
+        result, error = d()
+        if error:
+            raise error
+        return result
 
     def async(self, callback=None):
         if callback:
@@ -416,9 +419,6 @@ class Batch(object):
 
         self._batch_defers.remove(deferred)
 
-        # We may need to make another batch request
-        self._run()
-
         if deferred.kwargs.get('error'):
             # TODO: If this is a ProvisionedThroughput error, it would be nice
             # to do some additional attempts after backing off
@@ -429,6 +429,9 @@ class Batch(object):
             if not self._defer.done:
                 self._defer.callback(None, error=deferred.kwargs['error'])
         else:
+            # We may need to make another batch request
+            self._run()
+
             if len(self._batch_defers) == 0 and not self._defer.done:
                 # And we're done. We don't have any data to provide though.
                 self._defer.callback(None)
@@ -523,7 +526,7 @@ class WriteBatch(Batch):
         def handle_result(data, error=None):
             if error is not None:
                 real_error = parse_error(error)
-                log.error("Received error for batch: %r", real_error)
+                log.warning("Received error for batch: %r", real_error)
 
                 for key in requests:
                     self._request_defer[key].callback(None, error=real_error)

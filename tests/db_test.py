@@ -2,7 +2,7 @@ import time
 import pprint
 
 from testify import *
-from dynochemy import db, Table
+from dynochemy import db, Table, DynamoDBError
 
 class TestDB(db.BaseDB):
     def __init__(self):
@@ -98,9 +98,9 @@ class SimpleBatchTest(TestCase):
         d = batch.defer()
         callback = self.db.client.make_request.calls[0][1]['callback']
 
-        class Error(object):
+        class CustomError(DynamoDBError):
             data = '{"__type": "UnknownError", "message": "this is an error"}'
-        callback({}, error=Error())
+        callback({}, error=CustomError())
 
         assert d.done
         for df in item_dfs:
@@ -108,6 +108,54 @@ class SimpleBatchTest(TestCase):
             assert df.result[1]
 
         assert_equal(len(batch.errors), 1)
+
+class BatchSyncFailTest(TestCase):
+    @setup
+    def build_error(self):
+        class CustomError(DynamoDBError):
+            data = '{"__type": "UnknownError", "message": "this is an error"}'
+
+        self.error = CustomError()
+
+    @setup
+    def build_db(self):
+        self.db = TestDB()
+
+        def make_request(*args, **kwargs):
+            kwargs['callback'](None, self.error)
+
+        self.db.client.make_request = make_request
+
+        class TestTable(Table):
+            name = "test"
+            hash_key = 'user'
+            range_key = 'time'
+
+        self.db.register(TestTable)
+
+    @setup
+    def build_items(self):
+        self.items = [
+            {'user': 'rhett', 'time': time.time()},
+            {'user': 'bryan', 'time': time.time()},
+            {'user': 'neil', 'time': time.time()},
+        ]
+
+    def test(self):
+        batch = self.db.batch_write()
+        item_dfs = []
+        for item in self.items:
+            item_dfs.append(batch.TestTable.put(item))
+
+        try:
+            batch()
+        except DynamoDBError:
+            pass
+        else:
+            assert False, "Should have failed"
+            
+        assert_equal(len(batch.errors), 1)
+
 
 
 class MultipleBatchesTest(TestCase):

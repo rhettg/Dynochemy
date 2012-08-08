@@ -31,4 +31,4 @@ def parse_error(raw_error):
         return DynamoDBError(error_data['message'], error_data['__type'])
 
 
-__all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError"]
+__all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError", "DynamoDBError", "ProvisionedThroughputError"]
