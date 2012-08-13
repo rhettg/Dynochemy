@@ -32,17 +32,17 @@ class BaseDB(object):
         self._tables_by_db_name = {}
 
     def register(self, table, create=False):
-        self.tables[table.__name__] = table
-        self._tables_by_db_name[table.name] = table
+        self.tables[table.__name__] = instance = table(self)
+        self._tables_by_db_name[table.name] = instance
 
     def __getattr__(self, name):
         try:
-            return self.tables[name](self)
+            return self.tables[name]
         except KeyError:
             raise AttributeError(name)
 
     def table_by_name(self, name):
-        return self._tables_by_db_name[name](self)
+        return self._tables_by_db_name[name]
 
     def batch_write(self):
         return WriteBatch(self)
@@ -78,7 +78,7 @@ class Table(object):
             return (self.hash_key,)
 
     def _record_read_capacity(self, value):
-        log.debug("%.1f read capacity units consumed", value)
+        log.info("%.1f read capacity units consumed", value)
         self.read_counter.record(value)
 
     def _record_write_capacity(self, value):
