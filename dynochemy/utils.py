@@ -99,6 +99,9 @@ class ResourceCounter(object):
 
     def avg(self, seconds=1):
         """Returns the moving average over the specified interval"""
+        if self.last_second is None:
+            return 0.0
+
         age = int(time.time()) - self.last_second
         interval_left = seconds - age
 
