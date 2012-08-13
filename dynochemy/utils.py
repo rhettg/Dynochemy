@@ -11,6 +11,7 @@ especially for things like formatting datastructures for Dynamo.
 :license: ISC, see LICENSE for more details.
 
 """
+import time
 
 def stringify(val):
     if isinstance(val, bool):
@@ -94,19 +95,35 @@ class ResourceCounter(object):
     def __init__(self, size=60):
         self.size = size
         self.last_second = None
-        self.limits = []
+        self.values = []
 
-    def set_limit(self, seconds, value):
-        pass
+    def avg(self, seconds=1):
+        """Returns the moving average over the specified interval"""
+        age = int(time.time()) - self.last_second
+        interval_left = seconds - age
+
+        if seconds - age > 0:
+            return sum(self.values[0:interval_left]) / float(seconds)
+
+        return 0.0
 
     def record(self, value):
-        pass
+        current_time = int(time.time())
+        if self.last_second is None:
+            self.values.append(0)
+        elif self.last_second < current_time:
+            while self.last_second < current_time:
+                self.values.insert(0, 0)
+                self.last_second += 1
+
+        self.values[0] += value
+        self.last_second = current_time
+        del self.values[self.size:]
 
     def check(self):
         pass
-    
-    def avg(self, seconds=1):
-        """Returns the moving average over the specified interval"""
+
+    def set_limit(self, seconds, value):
         pass
 
 
