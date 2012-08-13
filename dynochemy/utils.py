@@ -130,7 +130,7 @@ class ResourceCounter(object):
         pass
 
 
-def predict_capacity_usage(request_type, args):
+def predict_capacity_usage(request_type, args, result=None):
     if request_type == 'GetItem':
         return 1.0
     elif request_type == 'BatchGetItem':
@@ -150,8 +150,14 @@ def predict_capacity_usage(request_type, args):
             out[table_name] = 1.0 * len(requests)
         return out
     elif request_type == 'Query':
-        return 25.0
+        if result:
+            return 1.0 * len(result['Items'])
+        else:
+            return 25.0
     elif request_type == 'Scan':
-        return 25.0
+        if result:
+            return 1.0 * len(result['Items'])
+        else:
+            return 25.0
     else:
         raise ValueError(request_type)

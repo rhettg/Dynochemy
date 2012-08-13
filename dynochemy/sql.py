@@ -359,7 +359,6 @@ class SQLClient(object):
     def make_request(self, command, body=None, callback=None):
         args = json.loads(body)
 
-        capacity = utils.predict_capacity_usage(command, args)
 
         result = None
         try:
@@ -370,11 +369,14 @@ class SQLClient(object):
         else:
             if result is None:
                 result = {}
+
+            capacity = utils.predict_capacity_usage(command, args, result=result)
+
             if isinstance(capacity, (float, int)):
                 result['ConsumedCapacityUnits'] = capacity
             else:
                 for table_name, value in capacity.iteritems():
-                    result.setdefault('Responses', {}).setdefault(table_name, {})['ConsumedCapacityUnits'] = value
+                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = value
 
             callback(result, error=None)
 
