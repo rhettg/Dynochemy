@@ -149,5 +149,9 @@ def predict_capacity_usage(request_type, args):
         for table_name, requests in args['RequestItems'].iteritems():
             out[table_name] = 1.0 * len(requests)
         return out
+    elif request_type == 'Query':
+        return 25.0
+    elif request_type == 'Scan':
+        return 25.0
     else:
         raise ValueError(request_type)
