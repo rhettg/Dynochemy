@@ -67,6 +67,8 @@ class Table(object):
 
     def __init__(self, db):
         self.db = db
+        self.read_counter = utils.ResourceCounter()
+        self.write_counter = utils.ResourceCounter()
 
     @property
     def key_spec(self):
@@ -74,6 +76,14 @@ class Table(object):
             return (self.hash_key, self.range_key)
         else:
             return (self.hash_key,)
+
+    def _record_read_capacity(self, value):
+        log.debug("%.1f read capacity units consumed", value)
+        self.read_counter.record(value)
+
+    def _record_write_capacity(self, value):
+        log.debug("%.1f write capacity units consumed", value)
+        self.write_counter.record(value)
 
     def _get(self, key, attributes=None, consistent=True, callback=None):
         data = {
@@ -98,6 +108,9 @@ class Table(object):
         def handle_result(data, error=None):
             if error is not None:
                 return callback(None, parse_error(error))
+
+            if 'ConsumedCapacityUnits' in data:
+                self._record_read_capacity(float(data['ConsumedCapacityUnits']))
 
             if 'Item' in data:
                 callback(utils.parse_item(data['Item']), None)
@@ -147,6 +160,9 @@ class Table(object):
             if error is not None:
                 callback(None, parse_error(error))
             else:
+                if 'ConsumedCapacityUnits' in data:
+                    self._record_write_capacity(float(data['ConsumedCapacityUnits']))
+
                 callback(None, None)
 
         self.db.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
@@ -198,6 +214,9 @@ class Table(object):
         def handle_result(data, error=None):
             if error is not None:
                 return callback(None, parse_error(error))
+
+            if 'ConsumedCapacityUnits' in data:
+                self._record_write_capacity(float(data['ConsumedCapacityUnits']))
 
             if 'Attributes' in data:
                 callback(utils.parse_item(data['Attributes']), None)
@@ -272,6 +291,9 @@ class Table(object):
             if error is not None:
                 callback(None, parse_error(error))
                 return
+
+            if 'ConsumedCapacityUnits' in data:
+                self._record_write_capacity(float(data['ConsumedCapacityUnits']))
 
             if 'Attributes' in result:
                 callback(utils.parse_item(result['Attributes']), None)
@@ -536,6 +558,10 @@ class WriteBatch(Batch):
             else:
                 log.debug("Received successful result from batch: %r", data)
 
+                if 'Responses' in data:
+                    for table_name, response_data in data['Responses'].iteritems():
+                        self.db.table_by_name(table_name)._record_write_capacity(float(response_data['ConsumedCapacityUnits']))
+
                 unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
                     for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
@@ -611,6 +637,10 @@ class ReadBatch(Batch):
                 batch_defer.callback(None, error=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
+
+                if 'Responses' in data:
+                    for table_name, response_data in data['Responses'].iteritems():
+                        self.db.table_by_name(table_name)._record_read_capacity(float(response_data['ConsumedCapacityUnits']))
 
                 unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
@@ -699,6 +729,9 @@ class Scan(object):
                 callback(None, parse_error(error))
                 return
 
+            if 'ConsumedCapacityUnits' in data:
+                self.table._record_read_capacity(float(data['ConsumedCapacityUnits']))
+
             callback(ScanResults(self, data), None)
 
         self.table.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
@@ -785,6 +818,9 @@ class Query(object):
         def handle_result(result_data, error=None):
             results = None
             if error is None:
+                if 'ConsumedCapacityUnits' in result_data:
+                    self.table._record_read_capacity(float(result_data['ConsumedCapacityUnits']))
+
                 results = QueryResults(self, result_data)
             else:
                 error = parse_error(error)
