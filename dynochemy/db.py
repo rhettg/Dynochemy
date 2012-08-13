@@ -78,7 +78,7 @@ class Table(object):
             return (self.hash_key,)
 
     def _record_read_capacity(self, value):
-        log.info("%.1f read capacity units consumed", value)
+        log.debug("%.1f read capacity units consumed", value)
         self.read_counter.record(value)
 
     def _record_write_capacity(self, value):
@@ -638,10 +638,6 @@ class ReadBatch(Batch):
             else:
                 log.debug("Received successful result from batch: %r", data)
 
-                if 'Responses' in data:
-                    for table_name, response_data in data['Responses'].iteritems():
-                        self.db.table_by_name(table_name)._record_read_capacity(float(response_data['ConsumedCapacityUnits']))
-
                 unprocessed_keys = set()
                 if data.get('UnprocessedItems'):
                     for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
@@ -662,10 +658,12 @@ class ReadBatch(Batch):
                 if unprocessed_keys:
                     log.warning("Found %d keys unprocessed", len(unprocessed_keys))
 
-                # Extract all the items out of the response. This is slightly complicated because we need
-                # to reconstitute what there request identifier must be (table name, (..key..))
                 found_entities = {}
-                for table_name, result in data.iteritems():
+                for table_name, result in data['Responses'].iteritems():
+
+                    if 'ConsumedCapacityUnits' in result:
+                        self.db.table_by_name(table_name)._record_read_capacity(float(result['ConsumedCapacityUnits']))
+
                     for item in result['Items']:
                         table = self.db.table_by_name(table_name)
                         assert item
@@ -674,6 +672,7 @@ class ReadBatch(Batch):
                         request = (table_name, key)
                         found_entities[request] = entity
 
+                # Now connect our found entities to the correct defer object
                 for request in requests:
                     if request not in unprocessed_keys:
                         if request in found_entities:

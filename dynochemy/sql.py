@@ -242,7 +242,7 @@ class SQLClient(object):
                 if item:
                     out[table_name]['Items'].append(item)
 
-        return out
+        return {'Responses': out}
 
     def do_scan(self, args):
         table_spec = self.tables[args['TableName']]
