@@ -7,6 +7,7 @@ This would be useful for local development
 :license: ISC, see LICENSE for more details.
 """
 import json
+import collections
 import pprint
 
 import sqlalchemy
@@ -55,6 +56,13 @@ class SQLClient(object):
         self.tables = {}
         self.metadata = sqlalchemy.MetaData(bind=engine)
 
+        # During an operation, we keep track of how much capacity is being used per table
+        self.reset_op_capacity()
+
+    def reset_op_capacity(self):
+        self.table_read_op_capacity = collections.defaultdict(int)
+        self.table_write_op_capacity = collections.defaultdict(int)
+
     def register_table(self, table_cls):
         try:
             sql_table = Table(table_cls.name, self.metadata, autoload=True, autoload_with=self.engine)
@@ -67,10 +75,20 @@ class SQLClient(object):
         else:
             key_spec = (table_cls.hash_key,)
 
+        read_counter = utils.ResourceCounter()
+        if table_cls.read_capacity:
+            read_counter.set_limit(5, table_cls.read_capacity)
+
+        write_counter = utils.ResourceCounter()
+        if table_cls.write_capacity:
+            write_counter.set_limit(5, table_cls.write_capacity)
+
         self.tables[table_cls.name] = {
             'sql_table': sql_table,
             'table_def': table_cls,
-            'key_spec': key_spec
+            'key_spec': key_spec,
+            'read_counter': read_counter,
+            'write_counter': write_counter,
         }
 
     def _get_item(self, table_name, key):
@@ -90,6 +108,8 @@ class SQLClient(object):
         except IndexError:
             return None
         else:
+            capacity_size = (len(res[sql_table.c.content]) / 1024) + 1
+            self.table_read_op_capacity[table_name] += capacity_size
             return json.loads(res[sql_table.c.content])
 
     def do_getitem(self, args):
@@ -112,13 +132,19 @@ class SQLClient(object):
 
         item = utils.parse_item(item_data)
         hash_key = item[key_spec[0]]
+
+        item_json = json.dumps(item_data)
+
+        capacity_size = (len(item_json) / 1024) + 1
+        self.table_write_op_capacity[table_name] += capacity_size
+
         if table_def.range_key:
             range_key = item[key_spec[1]]
             del_q = sql_table.delete().where(sql.and_(sql_table.c.hash_key==hash_key, sql_table.c.range_key==range_key))
-            ins = sql_table.insert().values(hash_key=hash_key, range_key=range_key, content=json.dumps(item_data))
+            ins = sql_table.insert().values(hash_key=hash_key, range_key=range_key, content=item_json)
         else:
             del_q = sql_table.delete().where(sql_table.c.hash_key==hash_key)
-            ins = sql_table.insert().values(hash_key=hash_key, content=json.dumps(item_data))
+            ins = sql_table.insert().values(hash_key=hash_key, content=item_json)
 
         try:
             self.engine.execute(ins)
@@ -146,6 +172,11 @@ class SQLClient(object):
             expr = sql_table.c.hash_key == utils.parse_value(args['Key']['HashKeyElement'])
 
         item = self.do_getitem(args)
+
+        # This one is kinda weird, we're basically gonna transfer whatever we
+        # racked up in reads to the write column.
+        self.table_write_op_capacity[args['TableName']] += self.table_read_op_capacity[args['TableName']]
+        self.table_read_op_capacity[args['TableName']] = 0
 
         del_q = sql_table.delete().where(expr)
         res = self.engine.execute(del_q)
@@ -256,8 +287,10 @@ class SQLClient(object):
         if unsupported_keys:
             raise NotImplementedError(unsupported_keys)
 
+        capacity_size = 0
         out = {'Items': []}
         for res in self.engine.execute(q):
+            capacity_size += (len(res[sql_table.c.content]) / 1024) + 1
             item_data = json.loads(res[sql_table.c.content])
             item = utils.parse_item(item_data)
             if 'ScanFilter' in args:
@@ -271,6 +304,8 @@ class SQLClient(object):
                             break
             else:
                 out['Items'].append(item_data)
+
+        self.table_read_op_capacity[table_name] += capacity_size
 
         return out
 
@@ -337,8 +372,11 @@ class SQLClient(object):
             else:
                 q = q.order_by(sql_table.c.range_key.desc())
 
+        capacity_size = 0
         out = {'Items': [], 'Count': 0}
         for res in self.engine.execute(q):
+            capacity_size += (len(res[sql_table.c.content]) / 1024) + 1
+
             item_data = json.loads(res[sql_table.c.content])
             item = utils.parse_item(item_data)
             if 'AttributesToGet' in args:
@@ -352,6 +390,8 @@ class SQLClient(object):
                 out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
                 break
 
+        self.table_read_op_capacity[args['TableName']] += capacity_size
+
         out['Count'] = len(out['Items'])
 
         return out
@@ -359,6 +399,7 @@ class SQLClient(object):
     def make_request(self, command, body=None, callback=None):
         args = json.loads(body)
 
+        self.reset_op_capacity()
 
         result = None
         try:
@@ -370,13 +411,23 @@ class SQLClient(object):
             if result is None:
                 result = {}
 
-            capacity = utils.predict_capacity_usage(command, args, result=result)
+            if 'TableName' in args:
+                if self.table_read_op_capacity:
+                    for _, capacity in self.table_read_op_capacity.iteritems():
+                        result['ConsumedCapacityUnits'] = float(capacity)
+                        self.tables[args['TableName']]['read_counter'].record(capacity)
+                elif self.table_write_op_capacity:
+                    for _, capacity in self.table_write_op_capacity.iteritems():
+                        result['ConsumedCapacityUnits'] = float(capacity)
+                        self.tables[args['TableName']]['write_counter'].record(capacity)
 
-            if isinstance(capacity, (float, int)):
-                result['ConsumedCapacityUnits'] = capacity
             else:
-                for table_name, value in capacity.iteritems():
-                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = value
+                for table_name, capacity in self.table_read_op_capacity.iteritems():
+                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    self.tables[table_name]['read_counter'].record(capacity)
+                for table_name, capacity in self.table_write_op_capacity.iteritems():
+                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    self.tables[table_name]['write_counter'].record(capacity)
 
             callback(result, error=None)
 

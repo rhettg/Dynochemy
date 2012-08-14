@@ -65,6 +65,9 @@ class Table(object):
     hash_key = None
     range_key = None
 
+    read_capacity = None
+    write_capacity = None
+
     def __init__(self, db):
         self.db = db
         self.read_counter = utils.ResourceCounter()
