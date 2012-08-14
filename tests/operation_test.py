@@ -205,3 +205,21 @@ class UpdateCombineTestCase(OperationTestCase):
 
 
 
+class GetTestCase(OperationTestCase):
+    @setup
+    def build_entity(self):
+        self.entity = {'key': 'hello', 'count': 1}
+        self.db.TestTable.put(self.entity)
+
+    @setup
+    def build_operation(self):
+        self.op = operation.GetOperation(TestTable, self.entity['key'])
+
+    def test(self):
+        result, err = self.op.run(self.db)
+        assert not err
+
+        entity, err = result[self.op]
+        assert not err
+
+        assert_equal(entity['count'], 1)

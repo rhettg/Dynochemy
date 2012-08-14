@@ -66,6 +66,7 @@ class OperationSet(Operation):
         # Really we can combine everything into into two operations
         self.update_ops = []
         self.batch_write_op = BatchWriteOperation()
+        self.batch_read_op = BatchReadOperation()
 
     def reduce(self, op):
         op_set = OperationSet()
@@ -74,6 +75,7 @@ class OperationSet(Operation):
             op_set.add_update(update)
 
         op_set.batch_write_op = self.batch_write_op
+        op_set.batch_read_op = self.batch_read_op
 
         if isinstance(op, OperationSet):
             for update_op in op.update_ops:
@@ -81,8 +83,11 @@ class OperationSet(Operation):
 
             op_set.batch_write_op = op_set.batch_write_op.reduce(op.batch_write_op)
 
-        elif isinstance(op, _BatchableMixin):
+        elif isinstance(op, _WriteBatchableMixin):
             op_set.batch_write_op = self.batch_write_op.reduce(op)
+
+        elif isinstance(op, _ReadBatchableMixin):
+            op_set.batch_read_op = self.batch_read_op.reduce(op)
 
         elif isinstance(op, UpdateOperation):
             op_set.add_update(op)
@@ -231,7 +236,7 @@ class UpdateOperation(Operation):
         return ('UPDATE', self.table.name, self.key)
 
 
-class _BatchableMixin(object):
+class _WriteBatchableMixin(object):
     """Mixing for operations that can be put in a batch write"""
     def reduce(self, op):
         batch_op = BatchWriteOperation()
@@ -239,8 +244,16 @@ class _BatchableMixin(object):
         batch_op.add(op)
         return batch_op
 
+class _ReadBatchableMixin(object):
+    """Mixing for operations that can be put in a batch read"""
+    def reduce(self, op):
+        batch_op = BatchReadOperation()
+        batch_op.add(self)
+        batch_op.add(op)
+        return batch_op
 
-class BatchWriteOperation(Operation, _BatchableMixin):
+
+class BatchWriteOperation(Operation, _WriteBatchableMixin):
     __slots__ = ["ops"]
     def __init__(self):
         self.ops = []
@@ -269,7 +282,35 @@ class BatchWriteOperation(Operation, _BatchableMixin):
         return df
 
 
-class PutOperation(Operation, _BatchableMixin):
+class BatchReadOperation(Operation, _ReadBatchableMixin):
+    __slots__ = ["ops"]
+    def __init__(self):
+        self.ops = []
+
+    def add(self, op):
+        if isinstance(op, BatchReadOperation):
+            self.ops += op.ops
+        else:
+            self.ops.append(op)
+
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        def record_result(op, cb):
+            result.record_result(op, cb.result)
+
+        batch = db.batch_read()
+        for op in self.ops:
+            op_df = op.add_to_batch(batch)
+            op_df.add_callback(functools.partial(record_result, op))
+
+        batch_df = batch.defer()
+        batch_df.add_callback(df.callback)
+
+        return df
+
+class PutOperation(Operation, _WriteBatchableMixin):
     def __init__(self, table, entity):
         self.table = table
         self.entity = entity
@@ -278,8 +319,12 @@ class PutOperation(Operation, _BatchableMixin):
         result = OperationResult(db)
         df = OperationResultDefer(result, db.ioloop)
 
+        def record_result(cb):
+            result.record_result(self, cb.result)
+            df.callback(cb)
+
         op_df = getattr(db, self.table.__name__).put_defer(self.entity)
-        op_df.add_callback(df.callback)
+        op_df.add_callback(record_result)
 
         return df
 
@@ -292,7 +337,7 @@ class PutOperation(Operation, _BatchableMixin):
         return ('PUT', self.table.name, key)
 
 
-class DeleteOperation(Operation, _BatchableMixin):
+class DeleteOperation(Operation, _WriteBatchableMixin):
     def __init__(self, table, key):
         self.table = table
         self.key = key
@@ -301,8 +346,12 @@ class DeleteOperation(Operation, _BatchableMixin):
         result = OperationResult(db)
         df = OperationResultDefer(result, db.ioloop)
 
+        def record_result(cb):
+            result.record_result(self, cb.result)
+            df.callback(cb)
+
         op_df = getattr(db, self.table.__name__).delete_defer(self.key)
-        op_df.add_callback(df.callback)
+        op_df.add_callback(record_result)
 
         return df
 
@@ -313,6 +362,33 @@ class DeleteOperation(Operation, _BatchableMixin):
     def unique_key(self):
         # Assumes updates for the same key have been combined together
         return ('DELETE', self.table.name, self.key)
+
+
+class GetOperation(Operation, _ReadBatchableMixin):
+    def __init__(self, table, key):
+        self.table = table
+        self.key = key
+
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        def record_result(cb):
+            result.record_result(self, cb.result)
+            df.callback(cb)
+
+        op_df = getattr(db, self.table.__name__).get_defer(self.key)
+        op_df.add_callback(record_result)
+
+        return df
+
+    def add_to_batch(self, batch):
+        return getattr(batch, self.table.__name__).get(self.key)
+
+    @property
+    def unique_key(self):
+        # Assumes updates for the same key have been combined together
+        return ('GET', self.table.name, self.key)
 
 
 class OperationResultDefer(defer.Defer):
