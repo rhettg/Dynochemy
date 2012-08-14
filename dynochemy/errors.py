@@ -22,6 +22,8 @@ class DynamoDBError(Error): pass
 
 class ProvisionedThroughputError(DynamoDBError): pass
 
+class UnprocessedItemError(DynamoDBError): pass
+
 def parse_error(raw_error):
     """Parse the error we get out of Boto into something we can code around"""
     if isinstance(raw_error, Error):

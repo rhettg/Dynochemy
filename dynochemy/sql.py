@@ -112,6 +112,7 @@ class SQLClient(object):
         else:
             capacity_size = (len(res[sql_table.c.content]) / 1024) + 1
             self.table_read_op_capacity[table_name] += capacity_size
+            self.tables[table_name]['read_counter'].record(capacity_size)
             return json.loads(res[sql_table.c.content])
 
     def do_getitem(self, args):
@@ -126,7 +127,7 @@ class SQLClient(object):
 
         return out
 
-    def _put_item(self, table_name, item_data):
+    def _put_item(self, table_name, item_data, record_capacity=True):
         table_spec = self.tables[table_name]
         sql_table = table_spec['sql_table']
         table_def = table_spec['table_def']
@@ -138,7 +139,9 @@ class SQLClient(object):
         item_json = json.dumps(item_data)
 
         capacity_size = (len(item_json) / 1024) + 1
-        self.table_write_op_capacity[table_name] += capacity_size
+        if record_capacity:
+            self.table_write_op_capacity[table_name] += capacity_size
+            self.tables[table_name]['write_counter'].record(capacity_size)
 
         if table_def.range_key:
             range_key = item[key_spec[1]]
@@ -154,6 +157,8 @@ class SQLClient(object):
             # Try again
             self.engine.execute(del_q)
             self.engine.execute(ins)
+        
+        return capacity_size
 
     def do_putitem(self, args):
         item_data = args['Item']
@@ -178,6 +183,7 @@ class SQLClient(object):
         # This one is kinda weird, we're basically gonna transfer whatever we
         # racked up in reads to the write column.
         self.table_write_op_capacity[args['TableName']] += self.table_read_op_capacity[args['TableName']]
+        self.tables[args['TableName']]['write_counter'].record(self.table_read_op_capacity[args['TableName']])
         self.table_read_op_capacity[args['TableName']] = 0
 
         del_q = sql_table.delete().where(expr)
@@ -263,7 +269,12 @@ class SQLClient(object):
                         out['UnprocessedItems'].setdefault(table_name, {'Items': []})
                         out['UnprocessedItems'][table_name]['Items'].append(request)
                     else:
-                        self._put_item(table_name, args['Item'])
+                        # Since our batch operations deal with capacity issues through the 'UnprocessedItems' system, we
+                        # need to deal with capacity differently. We'll record it instantly instead of waiting for the entire
+                        # op to complete.
+                        capacity_used = self._put_item(table_name, args['Item'], record_capacity=False)
+                        self.tables[table_name]['write_counter'].record(capacity_used)
+
                 elif req_type == "DeleteRequest":
                     # TODO: write capacity checks
                     self.do_deleteitem(args)
@@ -273,22 +284,22 @@ class SQLClient(object):
         return out
 
     def do_batchgetitem(self, args):
-        out = {}
+        out = {'Responses': {}}
         for table_name, requests in args['RequestItems'].iteritems():
-            out.setdefault(table_name, {'Items': []})
+            out['Responses'].setdefault(table_name, {'Items': []})
             for key in requests['Keys']:
                 # We'll go through and get each item as long as our capcity can handle it.
                 if not self.tables[table_name]['read_counter'].check():
-                    out.setdefault('UnprocessedItems', {})
-                    out['UnprocessedItems'].setdefault(table_name, {'Keys': []})
-                    out['UnprocessedItems'][table_name]['Keys'].append(key)
+                    out.setdefault('UnprocessedKeys', {})
+                    out['UnprocessedKeys'].setdefault(table_name, {'Keys': []})
+                    out['UnprocessedKeys'][table_name]['Keys'].append(key)
                 else:
                     # TODO: This would probably be nice as a better multi-key query
                     item = self._get_item(table_name, key)
                     if item:
-                        out[table_name]['Items'].append(item)
+                        out['Responses'][table_name]['Items'].append(item)
 
-        return {'Responses': out}
+        return out
 
     def do_scan(self, args):
         table_spec = self.tables[args['TableName']]
@@ -321,6 +332,7 @@ class SQLClient(object):
                 out['Items'].append(item_data)
 
         self.table_read_op_capacity[args['TableName']] += capacity_size
+        self.tables[args['TableName']]['read_counter'].record(capacity_size)
 
         return out
 
@@ -406,6 +418,7 @@ class SQLClient(object):
                 break
 
         self.table_read_op_capacity[args['TableName']] += capacity_size
+        self.tables[args['TableName']]['read_counter'].record(capacity_size)
 
         out['Count'] = len(out['Items'])
 
@@ -413,8 +426,14 @@ class SQLClient(object):
 
     def make_request(self, command, body=None, callback=None):
         args = json.loads(body)
+        
+        # Record and check our provisioning limits
+        if 'TableName' in args:
+            if command in ('GetItem', 'BatchGetItem') and not self.tables[args['TableName']]['read_counter'].check():
+                return callback(None, error=errors.ProvisionedThroughputError())
 
-        self.reset_op_capacity()
+            if command in ('PutItem', 'BatchWriteItem', 'DeleteItem', 'UpdateItem') and not self.tables[args['TableName']]['write_counter'].check():
+                return callback(None, error=errors.ProvisionedThroughputError())
 
         result = None
         try:
@@ -431,33 +450,17 @@ class SQLClient(object):
                 if self.table_read_op_capacity:
                     for _, capacity in self.table_read_op_capacity.iteritems():
                         result['ConsumedCapacityUnits'] = float(capacity)
-                        self.tables[args['TableName']]['read_counter'].record(capacity)
-
-                    if not self.tables[args['TableName']]['read_counter'].check():
-                        return callback(None, error=errors.ProvisionedThroughputError())
 
                 elif self.table_write_op_capacity:
                     for _, capacity in self.table_write_op_capacity.iteritems():
                         result['ConsumedCapacityUnits'] = float(capacity)
-                        self.tables[args['TableName']]['write_counter'].record(capacity)
-
-                    if not self.tables[args['TableName']]['write_counter'].check():
-                        return callback(None, error=errors.ProvisionedThroughputError())
 
             else:
                 for table_name, capacity in self.table_read_op_capacity.iteritems():
                     result.setdefault('Responses', {}).setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
-                    self.tables[table_name]['read_counter'].record(capacity)
-
-                    if not self.tables[table_name]['read_counter'].check():
-                        return callback(None, error=errors.ProvisionedThroughputError())
 
                 for table_name, capacity in self.table_write_op_capacity.iteritems():
                     result.setdefault('Responses', {}).setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
-                    self.tables[table_name]['write_counter'].record(capacity)
-
-                    if not self.tables[table_name]['write_counter'].check():
-                        return callback(None, error=errors.ProvisionedThroughputError())
 
             callback(result, error=None)
 

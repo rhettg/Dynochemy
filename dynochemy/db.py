@@ -15,7 +15,7 @@ import collections
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
-from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, parse_error
+from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, parse_error
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
@@ -366,9 +366,6 @@ class Table(object):
 class Batch(object):
     """Object for doing a batch operation.
 
-    The caller can do as many put, get or delete operations on the batch as needed, and the requests
-    will be combined into one or more requests to DynamoDB
-
     Usage should be something like:
 
         b = db.batch_write()
@@ -395,21 +392,17 @@ class Batch(object):
         # Requests are identified by a key, the format varying based on type of request. Generally it's a tuple
         # and some uniquly identifying information.
 
-        # This is our queue of requests that need processing
+        # Our requests that need to be processed
         self._requests = []
 
         # Map of request key to the actual request data
+        # TODO: needed?
         self._request_data = {}
 
         # Map of request key to the defer we returned for it.
         self._request_defer = {}
 
-
-        # Defer objects for outstanding batches. When this is empty, we're done.
-        self._batch_defers = []
-
         # This defer tracks the over all status of this batch.
-        # When all all 
         self._defer = ResultErrorKWDefer(ioloop=self.db.ioloop)
 
         self.errors = []
@@ -422,8 +415,9 @@ class Batch(object):
             raise AttributeError
 
     def __call__(self, timeout=None):
-        d = self._run()
-        result, error = d()
+        self._run_batch()
+
+        result, error = self._defer()
         if error:
             raise error
         return result
@@ -434,51 +428,14 @@ class Batch(object):
                 callback(df.result)
             self._defer.add_callback(defer_callback)
 
-        self._run()
+        self._run_batch()
 
     def defer(self):
-        return self._run()
-
-    def _batch_callback(self, deferred):
-        log.debug("Callback for df %r", deferred)
-
-        self._batch_defers.remove(deferred)
-
-        if deferred.kwargs.get('error'):
-            # TODO: If this is a ProvisionedThroughput error, it would be nice
-            # to do some additional attempts after backing off
-
-            # We may have already been completed if all the requests were marked with an error.
-            # On the other hand, we may have had requests that were never attempted and so this defer
-            # is still hanging around.
-            if not self._defer.done:
-                self._defer.callback(None, error=deferred.kwargs['error'])
-        else:
-            # We may need to make another batch request
-            self._run()
-
-            if len(self._batch_defers) == 0 and not self._defer.done:
-                # And we're done. We don't have any data to provide though.
-                self._defer.callback(None)
+        self._run_batch()
+        return self._defer
 
     def _make_request(requests):
         raise NotImplementedError
-
-    def _run(self):
-        log.debug("Creating batches, %d requests outstanding", len(self._requests))
-        if not self._requests and not self._batch_defers:
-            self._defer.callback(None)
-
-        while self._requests:
-            request_group = []
-
-            while len(request_group) < self.MAX_ITEMS and len(self._requests) > 0:
-                request_group.append(self._requests.pop())
-
-            self._run_batch(request_group)
-
-        return self._defer
-
 
 
 class BatchTable(object):
@@ -509,6 +466,9 @@ class WriteBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
+        if len(self._requests) >= self.MAX_ITEMS:
+            raise Error("Too many requests")
+
         self._request_defer[req_key] = df
         self._request_data[req_key] = (table.name, args)
         self._requests.append(req_key)
@@ -529,22 +489,21 @@ class WriteBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
+        if len(self._requests) >= self.MAX_ITEMS:
+            raise Error("Too many requests")
+
         self._request_defer[req_key] = df
         self._request_data[req_key] = (table.name, args)
         self._requests.append(req_key)
 
         return df
 
-    def _run_batch(self, requests):
-        log.debug("Creating BatchWrite request for %d items", len(requests))
-
-        batch_defer = ResultErrorKWDefer(ioloop=self._defer.ioloop)
-        batch_defer.add_callback(self._batch_callback)
-        self._batch_defers.append(batch_defer)
+    def _run_batch(self):
+        log.debug("Creating BatchWrite request for %d items", len(self._requests))
 
         args = {"RequestItems": {}}
 
-        for key in requests:
+        for key in self._requests:
             table_name, req = self._request_data[key]
             args['RequestItems'].setdefault(table_name, []).append(req)
 
@@ -553,11 +512,11 @@ class WriteBatch(Batch):
                 real_error = parse_error(error)
                 log.warning("Received error for batch: %r", real_error)
 
-                for key in requests:
+                for key in self._requests:
                     self._request_defer[key].callback(None, error=real_error)
 
                 self.errors.append(real_error)
-                batch_defer.callback(None, error=real_error)
+                self._defer.callback(None, error=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -578,21 +537,19 @@ class WriteBatch(Batch):
                                 log.warning("%r not found in %r", request, self._request_data.keys())
                                 continue
 
-                            assert request in self._request_data
+                            self._request_defer[request].callback(None, UnprocessedItemError)
                             unprocessed_keys.add(request)
-                            self._requests.append(request)
 
                 if unprocessed_keys:
                     log.warning("Found %d keys unprocessed", len(unprocessed_keys))
 
-                for key in requests:
+                for key in self._requests:
                     if key not in unprocessed_keys:
                         self._request_defer[key].callback(data)
 
-                batch_defer.callback(data)
+                self._defer.callback(data)
 
         self.db.client.make_request('BatchWriteItem', body=json.dumps(args), callback=handle_result)
-        return batch_defer
 
 
 class ReadBatch(Batch):
@@ -612,22 +569,21 @@ class ReadBatch(Batch):
         else:
             request = (table.name, (key,))
 
+        if len(self._requests) >= self.MAX_ITEMS:
+            raise Error("Too many requests")
+
         self._request_defer[request] = df
         self._request_data[request] = (table.name, req_key)
         self._requests.append(request)
 
         return df
 
-    def _run_batch(self, requests):
-        log.debug("Creating ReadBatch request for %d items", len(requests))
-
-        batch_defer = ResultErrorKWDefer(ioloop=self._defer.ioloop)
-        batch_defer.add_callback(self._batch_callback)
-        self._batch_defers.append(batch_defer)
+    def _run_batch(self):
+        log.debug("Creating ReadBatch request for %d items", len(self._requests))
 
         args = {"RequestItems": {}}
 
-        for request in requests:
+        for request in self._requests:
             table_name, key = self._request_data[request]
             args['RequestItems'].setdefault(table_name, {'Keys': []})['Keys'].append(key)
 
@@ -636,11 +592,10 @@ class ReadBatch(Batch):
                 real_error = parse_error(error)
                 log.error("Received error for batch: %r", real_error)
 
-                for request in requests:
+                for request in self._requests:
                     self._request_defer[request].callback(None, error=real_error)
 
-                self.errors.append(real_error)
-                batch_defer.callback(None, error=real_error)
+                self._defer.callback(None, error=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -658,13 +613,12 @@ class ReadBatch(Batch):
                                 continue
 
                             assert request in self._request_data
+                            self._request_defer[request].callback(None, UnprocessedItemError)
                             unprocessed_keys.add(request)
-                            self._requests.append(request)
 
                 if unprocessed_keys:
                     log.warning("Found %d keys unprocessed", len(unprocessed_keys))
 
-                found_entities = {}
                 for table_name, result in data['Responses'].iteritems():
 
                     if 'ConsumedCapacityUnits' in result:
@@ -676,20 +630,11 @@ class ReadBatch(Batch):
                         entity = utils.parse_item(item)
                         key = table._item_key(item)
                         request = (table_name, key)
-                        found_entities[request] = entity
+                        self._request_defer[request].callback(entity)
 
-                # Now connect our found entities to the correct defer object
-                for request in requests:
-                    if request not in unprocessed_keys:
-                        if request in found_entities:
-                            self._request_defer[request].callback(found_entities[request])
-                        else:
-                            self._request_defer[request].callback(None, error=KeyError())
-
-                batch_defer.callback(data)
+                self._defer.callback(data)
 
         self.db.client.make_request('BatchGetItem', body=json.dumps(args), callback=handle_result)
-        return batch_defer
 
 
 class Scan(object):

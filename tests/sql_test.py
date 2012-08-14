@@ -23,6 +23,7 @@ class ReadCapacityTestCase(TestCase):
     def build_entity(self):
         self.entity = {'key': 'hello', 'count': 0}
         self.db.TestTable.put(self.entity)
+        self.db.TestTable.get('hello')
 
     def test(self):
         try:
@@ -40,6 +41,10 @@ class WriteCapacityTestCase(TestCase):
         self.db = sql.SQLDB(engine)
         TestTable.write_capacity = 0.0
         self.db.register(TestTable)
+
+    @setup
+    def prime_table(self):
+        self.db.TestTable.put({'key': 'prime'})
 
     def test(self):
         try:
