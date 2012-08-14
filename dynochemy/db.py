@@ -607,7 +607,10 @@ class ReadBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
-        request = (table.name, key)
+        if table.has_range:
+            request = (table.name, key)
+        else:
+            request = (table.name, (key,))
 
         self._request_defer[request] = df
         self._request_data[request] = (table.name, req_key)
