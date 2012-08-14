@@ -23,6 +23,8 @@ class Defer(object):
 
     def add_callback(self, cb):
         self._callbacks.append(cb)
+        if self.done:
+            cb(self)
 
     def callback(self, *args, **kwargs):
         if self.done:
