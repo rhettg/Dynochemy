@@ -10,7 +10,10 @@ A key part of the interface is to use 'reduce' to combine operations together.
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 """
-from dynochemy import errors
+import functools
+
+from . import errors
+from . import defer
 
 class ReduceError(errors.Error): pass
 
@@ -29,14 +32,32 @@ class Operation(object):
     #def reduce(self, op):
         #raise NotImplementedError
 
-    def run(self, db):
-        raise NotImplementedError
-
-    def run_async(self, db, callback=None):
-        raise NotImplementedError
-
     def run_defer(self, db):
         raise NotImplementedError
+
+    @property
+    def unique_key(self):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        return self.unique_key == other.unique_key
+
+    def __hash__(self):
+        return hash(self.unique_key)
+
+    def run(self, db):
+        df = self.run_defer(db)
+        result = df()
+        return result
+
+    def run_async(self, db, callback=None):
+        df = self.run_defer(db)
+        def handle_result(cb):
+            if callback is not None:
+                callback(*cb.result)
+
+        df.add_callback(handle_result)
+
 
 
 class OperationSet(Operation):
@@ -92,10 +113,42 @@ class OperationSet(Operation):
         self.update_ops = new_update_ops
         return
 
-    def run(self, db):
-        self.batch_write_op.run(db)
+    def run_defer(self, db):
+        # This one is a little more complicated. We have to run all
+        # sub-operations and then combine the OperationResult objects
+
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        batch_write_defer = None
+        update_defers = []
+
+        # This result handler is going to track all our results. When they are done, we complete the master defer object
+        # and report the results
+        def record_result(cb):
+            r, err = cb.result
+            if err:
+                raise err
+
+            result.update(r)
+
+            if batch_write_defer and batch_write_defer.done and all(df.done for df in update_defers):
+                # This guy takes a defer itself, we'll just use the last one, but it shouldn't really matter
+                # Error handling is weird at this level.
+                df.callback(cb)
+
         for op in self.update_ops:
-            op.run(db)
+            op_defer = op.run_defer(db)
+            update_defers.append(op_defer)
+            op_defer.add_callback(record_result)
+
+        # note: we're doing this last because in sync mode, stuff is always
+        # done and we don't want to trigger the callback till we have created
+        # all the defers.
+        batch_write_defer = self.batch_write_op.run_defer(db)
+        batch_write_defer.add_callback(record_result)
+
+        return df
 
 
 def combine_dicts(left_dict, right_dict, combiner=None):
@@ -160,8 +213,22 @@ class UpdateOperation(Operation):
 
         return new_update
 
-    def run(self, db):
-        return getattr(db, self.table.__name__).update(self.key, add=self.add, put=self.put, delete=self.delete)
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        def record_result(cb):
+            result.record_result(self, cb.result)
+            df.callback(cb)
+
+        update_df = getattr(db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
+        update_df.add_callback(record_result)
+
+        return df
+
+    @property
+    def unique_key(self):
+        return ('UPDATE', self.table.name, self.key)
 
 
 class _BatchableMixin(object):
@@ -178,18 +245,28 @@ class BatchWriteOperation(Operation, _BatchableMixin):
     def __init__(self):
         self.ops = []
 
-    def run(self, db):
-        batch = db.batch_write()
-        for op in self.ops:
-            op.add_to_batch(batch)
-
-        return batch()
-
     def add(self, op):
         if isinstance(op, BatchWriteOperation):
             self.ops += op.ops
         else:
             self.ops.append(op)
+
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        def record_result(op, cb):
+            result.record_result(op, cb.result)
+
+        batch = db.batch_write()
+        for op in self.ops:
+            op_df = op.add_to_batch(batch)
+            op_df.add_callback(functools.partial(record_result, op))
+
+        batch_df = batch.defer()
+        batch_df.add_callback(df.callback)
+
+        return df
 
 
 class PutOperation(Operation, _BatchableMixin):
@@ -197,11 +274,22 @@ class PutOperation(Operation, _BatchableMixin):
         self.table = table
         self.entity = entity
 
-    def run(self, db):
-        return getattr(db, self.table.__name__).put(self.entity)
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        op_df = getattr(db, self.table.__name__).put_defer(self.entity)
+        op_df.add_callback(df.callback)
+
+        return df
 
     def add_to_batch(self, batch):
         return getattr(batch, self.table.__name__).put(self.entity)
+
+    @property
+    def unique_key(self):
+        key = tuple([self.entity[k] for k in self.table(None).key_spec])
+        return ('PUT', self.table.name, key)
 
 
 class DeleteOperation(Operation, _BatchableMixin):
@@ -209,9 +297,62 @@ class DeleteOperation(Operation, _BatchableMixin):
         self.table = table
         self.key = key
 
-    def run(self, db):
-        return getattr(db, self.table.__name__).delete(self.key)
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        op_df = getattr(db, self.table.__name__).delete_defer(self.key)
+        op_df.add_callback(df.callback)
+
+        return df
 
     def add_to_batch(self, batch):
         return getattr(batch, self.table.__name__).delete(self.key)
+
+    @property
+    def unique_key(self):
+        # Assumes updates for the same key have been combined together
+        return ('DELETE', self.table.name, self.key)
+
+
+class OperationResultDefer(defer.Defer):
+    """Special defer that returns a OperationResult, error tuple
+    """
+    def __init__(self, op_result, io_loop):
+        super(OperationResultDefer, self).__init__(io_loop)
+        self.op_result = op_result
+        self.error = None
+
+    def callback(self, cb):
+        # We are always called via another callback
+        assert cb.done
+        _, err = cb.result
+        if err:
+            self.error = err
+
+        super(OperationResultDefer, self).callback(cb)
+        
+    @property
+    def result(self):
+        return self.op_result, self.error
+
+
+# TODO: Make this just a dict?
+class OperationResult(object):
+    def __init__(self, db):
+        self.db = db
+        self.results = {}
+
+    def record_result(self, op, result):
+        self.results[op] = result
+
+    def update(self, other_result):
+        assert self.db == other_result.db
+        self.results.update(other_result.results)
+
+    def __getitem__(self, key):
+        return self.results[key]
+
+    def __repr__(self):
+        return repr(self.results)
 

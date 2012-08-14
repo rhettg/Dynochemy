@@ -105,10 +105,12 @@ class UpdateTestCase(OperationTestCase):
         self.op = operation.UpdateOperation(TestTable, self.entity['key'], add={'count': 1})
 
     def test(self):
-        self.op.run(self.db)
+        result, err = self.op.run(self.db)
+        assert not err
 
         entity = self.db.TestTable.get("hello")
         assert_equal(entity['count'], 2)
+        assert_equal(result[self.op][0]['count'], 2)
 
 
 class ReduceSimpleTestCase(OperationTestCase):
@@ -119,7 +121,9 @@ class ReduceSimpleTestCase(OperationTestCase):
 
         full_op = reduce(operation.reduce_operations, [op_1, op_2, op_3])
         assert isinstance(full_op, operation.BatchWriteOperation)
-        full_op.run(self.db)
+        result, err = full_op.run(self.db)
+        if err:
+            raise err
 
         entity_1 = self.db.TestTable.get('hello')
         assert_equal(entity_1['count'], 0)
@@ -130,17 +134,31 @@ class ReduceSimpleTestCase(OperationTestCase):
         entity_3 = self.db.TestTable.get('you')
         assert_equal(entity_3['count'], 2)
 
+        # Now check our result object
+        val, err = result[op_1]
+        assert not err
+
+        val, err = result[op_2]
+        assert not err
+
+        val, err = result[op_3]
+        assert not err
+
 
 class ReduceUpdateTestCase(OperationTestCase):
     def test(self):
         op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
         full_op = reduce(operation.reduce_operations, [op, op, op])
 
-        full_op.run(self.db)
+        result, err = full_op.run(self.db)
+        assert not err
 
         entity = self.db.TestTable.get('hello')
         assert_equal(entity['my_name'], 'slim shady')
         assert_equal(entity['count'], 3)
+
+        val, err = result[op]
+        assert not err
 
 
 class DoubleSetTestCase(OperationTestCase):
@@ -184,5 +202,6 @@ class UpdateCombineTestCase(OperationTestCase):
         full_op = reduce(operation.reduce_operations, [op_1, op_2, op_1, op_2])
         assert isinstance(full_op, operation.OperationSet)
         assert_equal(len(full_op.update_ops), 1)
+
 
 
