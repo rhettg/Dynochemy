@@ -250,6 +250,7 @@ class SQLClient(object):
             return {'Attributes': item}
 
     def do_batchwriteitem(self, args):
+        out = {}
         for table_name, requests in args['RequestItems'].iteritems():
             for request in requests:
                 req_type = request.keys()[0]
@@ -257,19 +258,26 @@ class SQLClient(object):
                 args['TableName'] = table_name
 
                 if req_type == "PutRequest":
-                    self._put_item(table_name, args['Item'])
+                    if not self.tables[table_name]['write_counter'].check():
+                        out.setdefault('UnprocessedItems', {})
+                        out['UnprocessedItems'].setdefault(table_name, {'Items': []})
+                        out['UnprocessedItems'][table_name]['Items'].append(request)
+                    else:
+                        self._put_item(table_name, args['Item'])
                 elif req_type == "DeleteRequest":
+                    # TODO: write capacity checks
                     self.do_deleteitem(args)
                 else:
                     raise NotImplementedError
 
-        return {}
+        return out
 
     def do_batchgetitem(self, args):
         out = {}
         for table_name, requests in args['RequestItems'].iteritems():
             out.setdefault(table_name, {'Items': []})
             for key in requests['Keys']:
+                # We'll go through and get each item as long as our capcity can handle it.
                 if not self.tables[table_name]['read_counter'].check():
                     out.setdefault('UnprocessedItems', {})
                     out['UnprocessedItems'].setdefault(table_name, {'Keys': []})
