@@ -223,3 +223,32 @@ class GetTestCase(OperationTestCase):
         assert not err
 
         assert_equal(entity['count'], 1)
+
+
+class MultiGetTestCase(OperationTestCase):
+    @setup
+    def build_entity(self):
+        entity = {'key': 'hello', 'count': 1}
+        self.db.TestTable.put(entity)
+
+        entity = {'key': 'world', 'count': 10}
+        self.db.TestTable.put(entity)
+
+
+    def test(self):
+        op_1 = operation.GetOperation(TestTable, "hello")
+        op_2 = operation.GetOperation(TestTable, "world")
+        full_op = reduce(operation.reduce_operations, [op_1, op_2])
+
+        result, err = full_op.run(self.db)
+        if err:
+            raise err
+
+        entity, err = result[op_1]
+        if err:
+            raise err
+        assert_equal(entity['count'], 1)
+
+        entity, err = result[op_2]
+        assert not err
+        assert_equal(entity['count'], 10)
