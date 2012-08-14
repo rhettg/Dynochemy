@@ -77,11 +77,13 @@ class SQLClient(object):
 
         read_counter = utils.ResourceCounter()
         if table_cls.read_capacity is not None:
-            read_counter.set_limit(5, table_cls.read_capacity)
+            read_counter.set_limit(1, table_cls.read_capacity)
+            read_counter.set_limit(5, table_cls.read_capacity * 0.80)
 
         write_counter = utils.ResourceCounter()
         if table_cls.write_capacity is not None:
-            write_counter.set_limit(5, table_cls.write_capacity)
+            write_counter.set_limit(1, table_cls.write_capacity)
+            write_counter.set_limit(5, table_cls.write_capacity * 0.80)
 
         self.tables[table_cls.name] = {
             'sql_table': sql_table,
@@ -268,10 +270,15 @@ class SQLClient(object):
         for table_name, requests in args['RequestItems'].iteritems():
             out.setdefault(table_name, {'Items': []})
             for key in requests['Keys']:
-                # TODO: This would probably be nice as a better multi-key query
-                item = self._get_item(table_name, key)
-                if item:
-                    out[table_name]['Items'].append(item)
+                if not self.tables[table_name]['read_counter'].check():
+                    out.setdefault('UnprocessedItems', {})
+                    out['UnprocessedItems'].setdefault(table_name, {'Keys': []})
+                    out['UnprocessedItems'][table_name]['Keys'].append(key)
+                else:
+                    # TODO: This would probably be nice as a better multi-key query
+                    item = self._get_item(table_name, key)
+                    if item:
+                        out[table_name]['Items'].append(item)
 
         return {'Responses': out}
 
@@ -431,14 +438,14 @@ class SQLClient(object):
 
             else:
                 for table_name, capacity in self.table_read_op_capacity.iteritems():
-                    result['Responses'].setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    result.setdefault('Responses', {}).setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
                     self.tables[table_name]['read_counter'].record(capacity)
 
                     if not self.tables[table_name]['read_counter'].check():
                         return callback(None, error=errors.ProvisionedThroughputError())
 
                 for table_name, capacity in self.table_write_op_capacity.iteritems():
-                    result['Responses'].setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    result.setdefault('Responses', {}).setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
                     self.tables[table_name]['write_counter'].record(capacity)
 
                     if not self.tables[table_name]['write_counter'].check():

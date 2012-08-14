@@ -426,6 +426,9 @@ class OperationResult(object):
         assert self.db == other_result.db
         self.results.update(other_result.results)
 
+    def iteritems(self):
+        return self.results.iteritems()
+
     def __getitem__(self, key):
         return self.results[key]
 

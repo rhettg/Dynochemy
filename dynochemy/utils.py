@@ -12,6 +12,9 @@ especially for things like formatting datastructures for Dynamo.
 
 """
 import time
+import logging
+
+log = logging.getLogger(__name__)
 
 def stringify(val):
     if isinstance(val, bool):
@@ -107,7 +110,9 @@ class ResourceCounter(object):
         interval_left = seconds - age
 
         if seconds - age > 0:
-            return sum(self.values[0:interval_left]) / float(seconds)
+            value = sum(self.values[0:interval_left]) / float(seconds)
+            log.info("Average over %d: %.1f", seconds, value)
+            return value
 
         return 0.0
 
