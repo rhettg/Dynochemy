@@ -96,6 +96,7 @@ class ResourceCounter(object):
         self.size = size
         self.last_second = None
         self.values = []
+        self.limits = []
 
     def avg(self, seconds=1):
         """Returns the moving average over the specified interval"""
@@ -124,10 +125,14 @@ class ResourceCounter(object):
         del self.values[self.size:]
 
     def check(self):
-        pass
+        for seconds, value in self.limits:
+            if self.avg(seconds) > value:
+                return False
+
+        return True
 
     def set_limit(self, seconds, value):
-        pass
+        self.limits.append((seconds, value))
 
 
 def predict_capacity_usage(request_type, args, result=None):

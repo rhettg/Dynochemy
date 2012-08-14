@@ -24,6 +24,9 @@ class ProvisionedThroughputError(DynamoDBError): pass
 
 def parse_error(raw_error):
     """Parse the error we get out of Boto into something we can code around"""
+    if isinstance(raw_error, Error):
+        return raw_error
+
     error_data = json.loads(raw_error.data)
     if 'ProvisionedThroughputExceededException' in error_data['__type']:
         return ProvisionedThroughputError(error_data['message'])
