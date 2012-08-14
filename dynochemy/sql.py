@@ -305,7 +305,7 @@ class SQLClient(object):
             else:
                 out['Items'].append(item_data)
 
-        self.table_read_op_capacity[table_name] += capacity_size
+        self.table_read_op_capacity[args['TableName']] += capacity_size
 
         return out
 
@@ -431,14 +431,14 @@ class SQLClient(object):
 
             else:
                 for table_name, capacity in self.table_read_op_capacity.iteritems():
-                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    result['Responses'].setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
                     self.tables[table_name]['read_counter'].record(capacity)
 
                     if not self.tables[table_name]['read_counter'].check():
                         return callback(None, error=errors.ProvisionedThroughputError())
 
                 for table_name, capacity in self.table_write_op_capacity.iteritems():
-                    result.setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
+                    result['Responses'].setdefault(table_name, {})['ConsumedCapacityUnits'] = float(capacity)
                     self.tables[table_name]['write_counter'].record(capacity)
 
                     if not self.tables[table_name]['write_counter'].check():
