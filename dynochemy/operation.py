@@ -449,6 +449,12 @@ class OperationResult(object):
     def record_result(self, op, result):
         self.results[op] = result
 
+    def rethrow(self):
+        for op, (_, err) in self.iteritems():
+            if err:
+                log.info("Failed Operation %r: %r", op, err)
+                raise err
+
     def update(self, other_result):
         assert self.db == other_result.db
         self.results.update(other_result.results)
