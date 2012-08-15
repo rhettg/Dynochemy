@@ -425,8 +425,9 @@ class SQLClient(object):
         return out
 
     def make_request(self, command, body=None, callback=None):
+        self.reset_op_capacity() 
+
         args = json.loads(body)
-        
         # Record and check our provisioning limits
         if 'TableName' in args:
             if command in ('GetItem', 'BatchGetItem') and not self.tables[args['TableName']]['read_counter'].check():
