@@ -136,8 +136,6 @@ class OperationSet(Operation):
         # and report the results
         def record_result(cb):
             r, err = cb.result
-            if err:
-                raise err
 
             result.update(r)
 
