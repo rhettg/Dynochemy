@@ -357,10 +357,11 @@ class Table(object):
         key = [utils.parse_value(item[k]) for k in self.key_spec]
         return tuple(key)
 
-    def _key_key(self, key):
+    def _key_key(self, value):
         """Return a tuple of identifying information for the parsed key"""
 
-        return (utils.parse_value(key['HashKeyElement']), utils.parse_value(key['RangeKeyElement']))
+        key = [utils.parse_value(value[name]) for name, _ in zip(('HashKeyElement', 'RangeKeyElement'), self.key_spec)]
+        return tuple(key)
 
 
 class Batch(object):
@@ -537,7 +538,7 @@ class WriteBatch(Batch):
                                 log.warning("%r not found in %r", request, self._request_data.keys())
                                 continue
 
-                            self._request_defer[request].callback(None, UnprocessedItemError)
+                            self._request_defer[request].callback(None, error=UnprocessedItemError())
                             unprocessed_keys.add(request)
 
                 if unprocessed_keys:
@@ -600,8 +601,8 @@ class ReadBatch(Batch):
                 log.debug("Received successful result from batch: %r", data)
 
                 unprocessed_keys = set()
-                if data.get('UnprocessedItems'):
-                    for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
+                if data.get('UnprocessedKeys'):
+                    for table_name, unprocessed_items in data['UnprocessedKeys'].iteritems():
                         table = self.db.table_by_name(table_name)
 
                         for req_key in unprocessed_items['Keys']:
@@ -613,7 +614,7 @@ class ReadBatch(Batch):
                                 continue
 
                             assert request in self._request_data
-                            self._request_defer[request].callback(None, UnprocessedItemError)
+                            self._request_defer[request].callback(None, error=UnprocessedItemError())
                             unprocessed_keys.add(request)
 
                 if unprocessed_keys:
