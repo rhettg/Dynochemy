@@ -14,6 +14,8 @@ import functools
 
 from . import errors
 from . import defer
+from . import utils
+from . import db as db_mod
 
 class ReduceError(errors.Error): pass
 
@@ -47,7 +49,9 @@ class Operation(object):
 
     def run(self, db):
         df = self.run_defer(db)
-        result = df()
+        result, err = df()
+        if err:
+            raise err
         return result
 
     def run_async(self, db, callback=None):
@@ -267,17 +271,29 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
     def run_defer(self, db):
         result = OperationResult(db)
         df = OperationResultDefer(result, db.ioloop)
+        if not self.ops:
+            df.done = True
+            return df
 
         def record_result(op, cb):
             result.record_result(op, cb.result)
 
-        batch = db.batch_write()
-        for op in self.ops:
-            op_df = op.add_to_batch(batch)
-            op_df.add_callback(functools.partial(record_result, op))
+        all_batch_defers = []
+        def handle_batch_result(cb):
+            if all(df.done for df in all_batch_defers) and not df.done:
+                df.callback(cb)
 
-        batch_df = batch.defer()
-        batch_df.add_callback(df.callback)
+        for op_set in utils.segment(self.ops, db_mod.WriteBatch.MAX_ITEMS):
+            batch = db.batch_write()
+            for op in op_set:
+                op_df = op.add_to_batch(batch)
+                op_df.add_callback(functools.partial(record_result, op))
+
+            batch_df = batch.defer()
+            all_batch_defers.append(batch_df)
+
+        for batch_df in all_batch_defers:
+            batch_df.add_callback(df.callback)
 
         return df
 
@@ -297,16 +313,29 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
         result = OperationResult(db)
         df = OperationResultDefer(result, db.ioloop)
 
+        if not self.ops:
+            df.done = True
+            return df
+
         def record_result(op, cb):
             result.record_result(op, cb.result)
 
-        batch = db.batch_read()
-        for op in self.ops:
-            op_df = op.add_to_batch(batch)
-            op_df.add_callback(functools.partial(record_result, op))
+        all_batch_defers = []
+        def handle_batch_result(cb):
+            if all(df.done for df in all_batch_defers) and not df.done:
+                df.callback(cb)
 
-        batch_df = batch.defer()
-        batch_df.add_callback(df.callback)
+        for op_set in utils.segment(self.ops, db_mod.ReadBatch.MAX_ITEMS):
+            batch = db.batch_read()
+            for op in op_set:
+                op_df = op.add_to_batch(batch)
+                op_df.add_callback(functools.partial(record_result, op))
+
+            batch_df = batch.defer()
+            all_batch_defers.append(batch_df)
+
+        for batch_df in all_batch_defers:
+            batch_df.add_callback(handle_batch_result)
 
         return df
 

@@ -13,6 +13,7 @@ especially for things like formatting datastructures for Dynamo.
 """
 import time
 import logging
+import itertools
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +82,14 @@ def parse_value(value_spec):
 
 def parse_item(item):
     return dict((k, parse_value(v)) for k, v in item.iteritems())
+
+def segment(iterable, size):
+    it = iter(iterable)
+    while True:
+        group = tuple(itertools.islice(it, None, size))
+        if not group:
+            break
+        yield group
 
 
 class ResourceCounter(object):

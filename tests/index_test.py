@@ -27,6 +27,7 @@ class TestTable(Table):
 
 
 class SimpleTestCase(TestCase):
+    __test__ = False
     @setup
     def build_db(self):
         engine = sqlalchemy.create_engine("sqlite://")

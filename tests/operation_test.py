@@ -105,8 +105,7 @@ class UpdateTestCase(OperationTestCase):
         self.op = operation.UpdateOperation(TestTable, self.entity['key'], add={'count': 1})
 
     def test(self):
-        result, err = self.op.run(self.db)
-        assert not err
+        result = self.op.run(self.db)
 
         entity = self.db.TestTable.get("hello")
         assert_equal(entity['count'], 2)
@@ -121,9 +120,7 @@ class ReduceSimpleTestCase(OperationTestCase):
 
         full_op = reduce(operation.reduce_operations, [op_1, op_2, op_3])
         assert isinstance(full_op, operation.BatchWriteOperation)
-        result, err = full_op.run(self.db)
-        if err:
-            raise err
+        result = full_op.run(self.db)
 
         entity_1 = self.db.TestTable.get('hello')
         assert_equal(entity_1['count'], 0)
@@ -150,8 +147,7 @@ class ReduceUpdateTestCase(OperationTestCase):
         op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
         full_op = reduce(operation.reduce_operations, [op, op, op])
 
-        result, err = full_op.run(self.db)
-        assert not err
+        result = full_op.run(self.db)
 
         entity = self.db.TestTable.get('hello')
         assert_equal(entity['my_name'], 'slim shady')
@@ -216,8 +212,7 @@ class GetTestCase(OperationTestCase):
         self.op = operation.GetOperation(TestTable, self.entity['key'])
 
     def test(self):
-        result, err = self.op.run(self.db)
-        assert not err
+        result = self.op.run(self.db)
 
         entity, err = result[self.op]
         assert not err
@@ -240,9 +235,7 @@ class MultiGetTestCase(OperationTestCase):
         op_2 = operation.GetOperation(TestTable, "world")
         full_op = reduce(operation.reduce_operations, [op_1, op_2])
 
-        result, err = full_op.run(self.db)
-        if err:
-            raise err
+        result = full_op.run(self.db)
 
         entity, err = result[op_1]
         if err:
@@ -252,3 +245,33 @@ class MultiGetTestCase(OperationTestCase):
         entity, err = result[op_2]
         assert not err
         assert_equal(entity['count'], 10)
+
+
+class MultiBatchReadTestCase(OperationTestCase):
+    @setup
+    def max_items(self):
+        self.orig_max_items = db.ReadBatch.MAX_ITEMS
+        db.ReadBatch.MAX_ITEMS = 2
+
+    @teardown
+    def un_max_items(self):
+        db.ReadBatch.MAX_ITEMS = self.orig_max_items
+
+    @setup
+    def build_entities(self):
+        self.keys = []
+        for ndx in range(4):
+            key = 'entity_%d' % ndx
+            self.keys.append(key)
+            entity = {'key': key, 'value': ndx}
+            self.db.TestTable.put(entity)
+
+    def test(self):
+        ops = [operation.GetOperation(TestTable, key) for key in self.keys]
+        full_op = reduce(operation.reduce_operations, ops)
+
+        results = full_op.run(self.db)
+        for key, op in zip(self.keys, ops):
+            val, err = results[op]
+            assert not err
+            assert_equal(val['key'], key)

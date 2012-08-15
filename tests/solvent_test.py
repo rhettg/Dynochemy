@@ -52,7 +52,6 @@ class GetSolventTestCase(SolventTestCase):
         assert_equal(ret['value'], 25)
 
 class SolventCapacityTestCase(SolventTestCase):
-    __test__ = False
     @setup
     def build_db(self):
         engine = sqlalchemy.create_engine("sqlite://")
