@@ -75,6 +75,9 @@ class SolventCapacityTestCase(SolventTestCase):
         put_op_3 = solvent.put(self.LimitedTestTable, {'key': 'you', 'value': 0})
 
         result = solvent.run(self.db)
+        for op in [put_op_1, put_op_2, put_op_3]:
+            _, err = result[op]
+            assert not err, err
 
         solvent = Solvent()
         get_op_1 = solvent.get(self.LimitedTestTable, 'hello')
@@ -82,6 +85,10 @@ class SolventCapacityTestCase(SolventTestCase):
         get_op_3 = solvent.get(self.LimitedTestTable, 'you')
 
         result = solvent.run(self.db)
+        for op in [get_op_1, get_op_2, get_op_3]:
+            entity, err = result[op]
+            assert not err, err
+            assert entity['key']
 
 
 

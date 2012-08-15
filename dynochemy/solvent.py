@@ -10,8 +10,12 @@ and then running it.
 :license: ISC, see LICENSE for more details.
 """
 import time
+import logging
 
 from . import operation
+from . import errors
+
+log = logging.getLogger(__name__)
 
 class Solvent(object):
     """A solvent is a abstraction over Dynochemy database operations where
@@ -73,16 +77,21 @@ class Solvent(object):
         final_results = operation.OperationResult(db)
         final_df = operation.OperationResultDefer(final_results, db.ioloop)
 
+        MAX_ATTEMPTS = 3
+        attempts = [0]
         def handle_result(cb):
             remaining_ops = []
             results, err = cb.result
             for op, (r, err) in results.iteritems():
-                if err:
+                if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
+                    log.debug("Provisioning error for %r on table %r", op, op.table.name)
                     remaining_ops.append(op)
                 else:
                     final_results.record_result(op, (r, err))
 
-            if remaining_ops:
+            log.info("%d remaining operations on attempt %d", len(remaining_ops), attempts[0])
+            if remaining_ops and attempts[0] < MAX_ATTEMPTS:
+                attempts[0] += 1
                 # We need to queue another operation
                 def run_next_ops():
                     next_df = reduce(operation.reduce_operations, remaining_ops).run_defer(db)
@@ -94,6 +103,7 @@ class Solvent(object):
                     time.sleep(0.5)
                     run_next_ops()
             else:
+                log.debug("Solvent complete")
                 # We're all done, complete the final df
                 final_df.callback(op_df)
 
