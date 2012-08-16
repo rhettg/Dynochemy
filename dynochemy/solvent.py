@@ -30,7 +30,12 @@ class Solvent(object):
         self.operations = []
 
     def _op(self):
-        op = reduce(operation.reduce_operations, self.operations)
+        if self.operations:
+            op = reduce(operation.reduce_operations, self.operations)
+        else:
+            # Empty op
+            op = operation.OperationSet()
+
         return op
 
     def put(self, table, entity):
