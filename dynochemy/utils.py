@@ -37,7 +37,7 @@ def format_value(value):
             if value_spec.keys()[0] == 'S':
                 spec = 'SS'
             elif value_spec.keys()[0] == 'N':
-                spec = 'SN'
+                spec = 'NS'
             values.append(value_spec.values()[0])
         return {spec: values}
     else:
@@ -75,7 +75,7 @@ def parse_value(value_spec):
         # Note that we could use 'sets' for these, but they are kinda awkward
         # to deal with (and don't natively json encode)
         return value
-    elif key == 'SN':
+    elif key == 'NS':
         return [_parse_value_spec('N', v) for v in value]
     else:
         raise ValueError(key)
