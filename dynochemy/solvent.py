@@ -89,7 +89,7 @@ class Solvent(object):
                 else:
                     final_results.record_result(op, (r, err))
 
-            log.info("%d remaining operations on attempt %d", len(remaining_ops), attempts[0])
+            log.debug("%d remaining operations on attempt %d", len(remaining_ops), attempts[0])
             if remaining_ops and attempts[0] < MAX_ATTEMPTS:
                 attempts[0] += 1
                 # We need to queue another operation
