@@ -258,13 +258,13 @@ class _ReadBatchableMixin(object):
 class BatchWriteOperation(Operation, _WriteBatchableMixin):
     __slots__ = ["ops"]
     def __init__(self):
-        self.ops = []
+        self.ops = set()
 
     def add(self, op):
         if isinstance(op, BatchWriteOperation):
-            self.ops += op.ops
+            self.ops.update(op.ops)
         else:
-            self.ops.append(op)
+            self.ops.add(op)
 
     def run_defer(self, db):
         result = OperationResult(db)
@@ -299,13 +299,13 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
 class BatchReadOperation(Operation, _ReadBatchableMixin):
     __slots__ = ["ops"]
     def __init__(self):
-        self.ops = []
+        self.ops = set()
 
     def add(self, op):
         if isinstance(op, BatchReadOperation):
-            self.ops += op.ops
+            self.ops.update(op.ops)
         else:
-            self.ops.append(op)
+            self.ops.add(op)
 
     def run_defer(self, db):
         result = OperationResult(db)
@@ -336,6 +336,7 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
             batch_df.add_callback(handle_batch_result)
 
         return df
+
 
 class PutOperation(Operation, _WriteBatchableMixin):
     def __init__(self, table, entity):
