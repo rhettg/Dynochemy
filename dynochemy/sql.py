@@ -266,8 +266,8 @@ class SQLClient(object):
                 if req_type == "PutRequest":
                     if not self.tables[table_name]['write_counter'].check():
                         out.setdefault('UnprocessedItems', {})
-                        out['UnprocessedItems'].setdefault(table_name, {'Items': []})
-                        out['UnprocessedItems'][table_name]['Items'].append(request)
+                        out['UnprocessedItems'].setdefault(table_name, [])
+                        out['UnprocessedItems'][table_name].append(request)
                     else:
                         # Since our batch operations deal with capacity issues through the 'UnprocessedItems' system, we
                         # need to deal with capacity differently. We'll record it instantly instead of waiting for the entire

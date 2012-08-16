@@ -529,7 +529,7 @@ class WriteBatch(Batch):
                 if data.get('UnprocessedItems'):
                     for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
                         table = self.db.table_by_name(table_name)
-                        for item in unprocessed_items['Items']:
+                        for item in unprocessed_items:
                             (req_type, req), = item.items()
                             key = table._item_key(req['Item'])
                             request = (table_name, req_type, key)
