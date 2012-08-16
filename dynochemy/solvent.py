@@ -17,6 +17,8 @@ from . import errors
 
 log = logging.getLogger(__name__)
 
+MAX_ATTEMPTS = 5
+
 class Solvent(object):
     """A solvent is a abstraction over Dynochemy database operations where
     operations can be combined together and executed with some intelligence.
@@ -82,7 +84,6 @@ class Solvent(object):
         final_results = operation.OperationResult(db)
         final_df = operation.OperationResultDefer(final_results, db.ioloop)
 
-        MAX_ATTEMPTS = 3
         attempts = [0]
         def handle_result(cb):
             remaining_ops = []
@@ -102,15 +103,20 @@ class Solvent(object):
                     next_df = reduce(operation.reduce_operations, remaining_ops).run_defer(db)
                     next_df.add_callback(handle_result)
 
+                delay_secs = 0.8 * attempts[0]
+                log.debug("Trying again in %.1f seconds", delay_secs)
                 if db.ioloop:
-                    db.ioloop.add_timeout(time.time() + 0.5, run_next_ops)
+                    db.ioloop.add_timeout(time.time() + delay_secs, run_next_ops)
                 else:
-                    time.sleep(0.5)
+                    time.sleep(delay_secs)
                     run_next_ops()
+            elif remaining_ops:
+                log.warning("Gave up after %d attempts", attempts[0])
+                final_df.callback(cb)
             else:
                 log.debug("Solvent complete")
                 # We're all done, complete the final df
-                final_df.callback(op_df)
+                final_df.callback(cb)
 
         op_df = self._op().run_defer(db)
         op_df.add_callback(handle_result)

@@ -525,11 +525,11 @@ class WriteBatch(Batch):
                     for table_name, response_data in data['Responses'].iteritems():
                         self.db.table_by_name(table_name)._record_write_capacity(float(response_data['ConsumedCapacityUnits']))
 
-                unprocessed_keys = set()
+                unprocessed_items = set()
                 if data.get('UnprocessedItems'):
-                    for table_name, unprocessed_items in data['UnprocessedItems'].iteritems():
+                    for table_name, items in data['UnprocessedItems'].iteritems():
                         table = self.db.table_by_name(table_name)
-                        for item in unprocessed_items:
+                        for item in items:
                             (req_type, req), = item.items()
                             key = table._item_key(req['Item'])
                             request = (table_name, req_type, key)
@@ -539,13 +539,13 @@ class WriteBatch(Batch):
                                 continue
 
                             self._request_defer[request].callback(None, error=UnprocessedItemError())
-                            unprocessed_keys.add(request)
+                            unprocessed_items.add(request)
 
-                if unprocessed_keys:
-                    log.warning("Found %d keys unprocessed", len(unprocessed_keys))
+                if unprocessed_items:
+                    log.warning("Found %d items unprocessed in BatchWrite", len(unprocessed_items))
 
                 for key in self._requests:
-                    if key not in unprocessed_keys:
+                    if key not in unprocessed_items:
                         self._request_defer[key].callback(data)
 
                 self._defer.callback(data)
@@ -618,7 +618,7 @@ class ReadBatch(Batch):
                             unprocessed_keys.add(request)
 
                 if unprocessed_keys:
-                    log.warning("Found %d keys unprocessed", len(unprocessed_keys))
+                    log.warning("Found %d keys unprocessed in BatchRead", len(unprocessed_keys))
 
                 for table_name, result in data['Responses'].iteritems():
 
