@@ -120,7 +120,7 @@ class ResourceCounter(object):
 
         if seconds - age > 0:
             value = sum(self.values[0:interval_left]) / float(seconds)
-            log.info("Average over %d: %.1f", seconds, value)
+            log.debug("Average over %d: %.1f", seconds, value)
             return value
 
         return 0.0
