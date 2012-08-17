@@ -29,16 +29,14 @@ class Solvent(object):
         * memcache write-through caches and invalidation
     """
     def __init__(self):
+        # We always start with an operation set, because everything can be reduced into it.
         self.operations = []
 
     def _op(self):
         if self.operations:
-            op = reduce(operation.reduce_operations, self.operations)
+            return reduce(operation.reduce_operations, self.operations)
         else:
-            # Empty op
-            op = operation.OperationSet()
-
-        return op
+            return operation.OperationSet()
 
     def put(self, table, entity):
         op = operation.PutOperation(table, entity)
@@ -94,6 +92,11 @@ class Solvent(object):
                     remaining_ops.append(op)
                 else:
                     final_results.record_result(op, (r, err))
+
+            # We've updated individual results piecemeal, but we're going to
+            # need our capacity values as well.
+            final_results.update_write_capacity(results.write_capacity)
+            final_results.update_read_capacity(results.read_capacity)
 
             log.debug("%d remaining operations on attempt %d", len(remaining_ops), attempts[0])
             if remaining_ops and attempts[0] < MAX_ATTEMPTS:

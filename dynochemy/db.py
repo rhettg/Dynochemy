@@ -112,11 +112,13 @@ class Table(object):
             if error is not None:
                 return callback(None, parse_error(error))
 
+            read_capacity = {self.name: 0.0}
             if 'ConsumedCapacityUnits' in data:
-                self._record_read_capacity(float(data['ConsumedCapacityUnits']))
+                read_capacity[self.name] = float(data['ConsumedCapacityUnits'])
+                self._record_read_capacity(read_capacity[self.name])
 
             if 'Item' in data:
-                callback(utils.parse_item(data['Item']), None)
+                callback(utils.parse_item(data['Item']), None, read_capacity=read_capacity)
             else:
                 callback(None, None)
 
@@ -163,10 +165,12 @@ class Table(object):
             if error is not None:
                 callback(None, parse_error(error))
             else:
+                write_capacity = {self.name: 0.0}
                 if 'ConsumedCapacityUnits' in data:
-                    self._record_write_capacity(float(data['ConsumedCapacityUnits']))
+                    write_capacity[self.name] = float(data['ConsumedCapacityUnits'])
+                    self._record_write_capacity(write_capacity[self.name])
 
-                callback(None, None)
+                callback(None, None, write_capacity=write_capacity)
 
         self.db.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -218,13 +222,15 @@ class Table(object):
             if error is not None:
                 return callback(None, parse_error(error))
 
+            write_capacity = {self.name: 0.0}
             if 'ConsumedCapacityUnits' in data:
-                self._record_write_capacity(float(data['ConsumedCapacityUnits']))
+                write_capacity[self.name] = float(data['ConsumedCapacityUnits'])
+                self._record_write_capacity(write_capacity[self.name])
 
             if 'Attributes' in data:
-                callback(utils.parse_item(data['Attributes']), None)
+                callback(utils.parse_item(data['Attributes']), None, write_capacity=write_capacity)
             else:
-                callback(None, None)
+                callback(None, None, write_capacity=write_capacity)
 
         self.db.client.make_request('DeleteItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -295,13 +301,15 @@ class Table(object):
                 callback(None, parse_error(error))
                 return
 
-            if 'ConsumedCapacityUnits' in data:
-                self._record_write_capacity(float(data['ConsumedCapacityUnits']))
+            write_capacity = 0.0
+            if 'ConsumedCapacityUnits' in result:
+                write_capacity = float(result['ConsumedCapacityUnits'])
+                self._record_write_capacity(write_capacity)
 
             if 'Attributes' in result:
-                callback(utils.parse_item(result['Attributes']), None)
+                callback(utils.parse_item(result['Attributes']), None, write_capacity={self.name: write_capacity})
             else:
-                callback(None, None)
+                callback(None, None, write_capacity={self.name: write_capacity})
 
         self.db.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -521,8 +529,10 @@ class WriteBatch(Batch):
             else:
                 log.debug("Received successful result from batch: %r", data)
 
+                write_capacity = collections.defaultdict(float)
                 if 'Responses' in data:
                     for table_name, response_data in data['Responses'].iteritems():
+                        write_capacity[table_name] += float(response_data['ConsumedCapacityUnits'])
                         self.db.table_by_name(table_name)._record_write_capacity(float(response_data['ConsumedCapacityUnits']))
 
                 unprocessed_items = set()
@@ -548,7 +558,7 @@ class WriteBatch(Batch):
                     if key not in unprocessed_items:
                         self._request_defer[key].callback(data)
 
-                self._defer.callback(data)
+                self._defer.callback(data, write_capacity=write_capacity)
 
         self.db.client.make_request('BatchWriteItem', body=json.dumps(args), callback=handle_result)
 
@@ -620,9 +630,11 @@ class ReadBatch(Batch):
                 if unprocessed_keys:
                     log.warning("Found %d keys unprocessed in BatchRead", len(unprocessed_keys))
 
+                read_capacity = collections.defaultdict(float)
                 for table_name, result in data['Responses'].iteritems():
 
                     if 'ConsumedCapacityUnits' in result:
+                        read_capacity[table_name] += float(result['ConsumedCapacityUnits'])
                         self.db.table_by_name(table_name)._record_read_capacity(float(result['ConsumedCapacityUnits']))
 
                     for item in result['Items']:
@@ -633,7 +645,7 @@ class ReadBatch(Batch):
                         request = (table_name, key)
                         self._request_defer[request].callback(entity)
 
-                self._defer.callback(data)
+                self._defer.callback(data, read_capacity=read_capacity)
 
         self.db.client.make_request('BatchGetItem', body=json.dumps(args), callback=handle_result)
 

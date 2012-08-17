@@ -80,7 +80,7 @@ class BatchWriteTestCase(OperationTestCase):
         self.batch_op.add(delete_op)
 
     def test(self):
-        self.batch_op.run(self.db)
+        results = self.batch_op.run(self.db)
 
         try:
             entity = self.db.TestTable.get("hello")
@@ -92,6 +92,8 @@ class BatchWriteTestCase(OperationTestCase):
         entity = self.db.TestTable.get("world")
         assert entity
         assert_equal(entity['count'], 1)
+
+        assert_equal(results.write_capacity[self.db.TestTable.name], 2.0)
 
 
 class UpdateTestCase(OperationTestCase):
@@ -275,3 +277,5 @@ class MultiBatchReadTestCase(OperationTestCase):
             val, err = results[op]
             assert not err
             assert_equal(val['key'], key)
+
+        assert_equal(results.read_capacity[self.db.TestTable.name], 4.0)

@@ -32,7 +32,9 @@ def reduce_operations(left_op, right_op):
 
 class Operation(object):
     #def reduce(self, op):
-        #raise NotImplementedError
+        #op = OperationSet()
+        #op = op.reduce(self)
+        #return op.reduce(op)
 
     def run_defer(self, db):
         raise NotImplementedError
@@ -86,6 +88,7 @@ class OperationSet(Operation):
                 op_set.add_update(update_op)
 
             op_set.batch_write_op = op_set.batch_write_op.reduce(op.batch_write_op)
+            op_set.batch_read_op = op_set.batch_read_op.reduce(op.batch_read_op)
 
         elif isinstance(op, _WriteBatchableMixin):
             op_set.batch_write_op = self.batch_write_op.reduce(op)
@@ -199,7 +202,7 @@ class UpdateOperation(Operation):
             op_set.update_ops.append(op)
             return op_set
         else:
-            raise ValueError(op)
+            return OperationSet().reduce(self).reduce(op)
 
     def combine_updates(self, update_op):
         """Combine two UpdateOperations assuming they are for the same table/key combination"""
@@ -225,7 +228,10 @@ class UpdateOperation(Operation):
         df = OperationResultDefer(result, db.ioloop)
 
         def record_result(cb):
-            result.record_result(self, cb.result)
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
             df.callback(cb)
 
         update_df = getattr(db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
@@ -241,18 +247,26 @@ class UpdateOperation(Operation):
 class _WriteBatchableMixin(object):
     """Mixing for operations that can be put in a batch write"""
     def reduce(self, op):
-        batch_op = BatchWriteOperation()
-        batch_op.add(self)
-        batch_op.add(op)
-        return batch_op
+        if isinstance(op, _WriteBatchableMixin):
+            batch_op = BatchWriteOperation()
+            batch_op.add(self)
+            batch_op.add(op)
+            return batch_op
+        else:
+            op_set = OperationSet()
+            return op_set.reduce(self).reduce(op)
 
 class _ReadBatchableMixin(object):
     """Mixing for operations that can be put in a batch read"""
     def reduce(self, op):
-        batch_op = BatchReadOperation()
-        batch_op.add(self)
-        batch_op.add(op)
-        return batch_op
+        if isinstance(op, _ReadBatchableMixin):
+            batch_op = BatchReadOperation()
+            batch_op.add(self)
+            batch_op.add(op)
+            return batch_op
+        else:
+            op_set = OperationSet()
+            return op_set.reduce(self).reduce(op)
 
 
 class BatchWriteOperation(Operation, _WriteBatchableMixin):
@@ -261,6 +275,9 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
         self.ops = set()
 
     def add(self, op):
+        if not isinstance(op, _WriteBatchableMixin):
+            raise ValueError(op)
+
         if isinstance(op, BatchWriteOperation):
             self.ops.update(op.ops)
         else:
@@ -278,6 +295,7 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
 
         all_batch_defers = []
         def handle_batch_result(cb):
+            result.update_write_capacity(cb.kwargs.get('write_capacity', {}))
             if all(df.done for df in all_batch_defers) and not df.done:
                 df.callback(cb)
 
@@ -291,7 +309,7 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
             all_batch_defers.append(batch_df)
 
         for batch_df in all_batch_defers:
-            batch_df.add_callback(df.callback)
+            batch_df.add_callback(handle_batch_result)
 
         return df
 
@@ -302,6 +320,8 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
         self.ops = set()
 
     def add(self, op):
+        if not isinstance(op, _ReadBatchableMixin):
+            raise ValueError(op)
         if isinstance(op, BatchReadOperation):
             self.ops.update(op.ops)
         else:
@@ -320,6 +340,8 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
 
         all_batch_defers = []
         def handle_batch_result(cb):
+            result.update_read_capacity(cb.kwargs.get('read_capacity'))
+
             if all(df.done for df in all_batch_defers) and not df.done:
                 df.callback(cb)
 
@@ -348,7 +370,10 @@ class PutOperation(Operation, _WriteBatchableMixin):
         df = OperationResultDefer(result, db.ioloop)
 
         def record_result(cb):
-            result.record_result(self, cb.result)
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
             df.callback(cb)
 
         op_df = getattr(db, self.table.__name__).put_defer(self.entity)
@@ -375,7 +400,10 @@ class DeleteOperation(Operation, _WriteBatchableMixin):
         df = OperationResultDefer(result, db.ioloop)
 
         def record_result(cb):
-            result.record_result(self, cb.result)
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
             df.callback(cb)
 
         op_df = getattr(db, self.table.__name__).delete_defer(self.key)
@@ -402,7 +430,10 @@ class GetOperation(Operation, _ReadBatchableMixin):
         df = OperationResultDefer(result, db.ioloop)
 
         def record_result(cb):
-            result.record_result(self, cb.result)
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
             df.callback(cb)
 
         op_df = getattr(db, self.table.__name__).get_defer(self.key)
@@ -447,8 +478,17 @@ class OperationResult(object):
         self.db = db
         self.results = {}
 
-    def record_result(self, op, result):
+        self.read_capacity = {}
+        self.write_capacity = {}
+
+    def record_result(self, op, result, read_capacity=None, write_capacity=None):
         self.results[op] = result
+
+        if read_capacity:
+            self.update_read_capacity(read_capacity)
+
+        if write_capacity:
+            self.update_write_capacity(write_capacity)
 
     def rethrow(self):
         for op, (_, err) in self.iteritems():
@@ -459,6 +499,19 @@ class OperationResult(object):
     def update(self, other_result):
         assert self.db == other_result.db
         self.results.update(other_result.results)
+
+        self.update_read_capacity(other_result.read_capacity)
+        self.update_write_capacity(other_result.write_capacity)
+
+    def update_read_capacity(self, read_capacity):
+        for name, value in read_capacity.iteritems():
+            self.read_capacity.setdefault(name, 0.0)
+            self.read_capacity[name] += value
+
+    def update_write_capacity(self, write_capacity):
+        for name, value in write_capacity.iteritems():
+            self.write_capacity.setdefault(name, 0.0)
+            self.write_capacity[name] += value
 
     def iteritems(self):
         return self.results.iteritems()

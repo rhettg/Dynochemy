@@ -127,7 +127,7 @@ class SQLClient(object):
 
         return out
 
-    def _put_item(self, table_name, item_data, record_capacity=True):
+    def _put_item(self, table_name, item_data):
         table_spec = self.tables[table_name]
         sql_table = table_spec['sql_table']
         table_def = table_spec['table_def']
@@ -139,9 +139,8 @@ class SQLClient(object):
         item_json = json.dumps(item_data)
 
         capacity_size = (len(item_json) / 1024) + 1
-        if record_capacity:
-            self.table_write_op_capacity[table_name] += capacity_size
-            self.tables[table_name]['write_counter'].record(capacity_size)
+        self.table_write_op_capacity[table_name] += capacity_size
+        self.tables[table_name]['write_counter'].record(capacity_size)
 
         if table_def.range_key:
             range_key = item[key_spec[1]]
@@ -182,9 +181,12 @@ class SQLClient(object):
 
         # This one is kinda weird, we're basically gonna transfer whatever we
         # racked up in reads to the write column.
-        self.table_write_op_capacity[args['TableName']] += self.table_read_op_capacity[args['TableName']]
-        self.tables[args['TableName']]['write_counter'].record(self.table_read_op_capacity[args['TableName']])
+        op_capacity = self.table_read_op_capacity[args['TableName']]
         self.table_read_op_capacity[args['TableName']] = 0
+        self.tables[args['TableName']]['read_counter'].record(op_capacity * -1)
+
+        self.table_write_op_capacity[args['TableName']] += op_capacity
+        self.tables[args['TableName']]['write_counter'].record(op_capacity)
 
         del_q = sql_table.delete().where(expr)
         res = self.engine.execute(del_q)
@@ -269,11 +271,7 @@ class SQLClient(object):
                         out['UnprocessedItems'].setdefault(table_name, [])
                         out['UnprocessedItems'][table_name].append(request)
                     else:
-                        # Since our batch operations deal with capacity issues through the 'UnprocessedItems' system, we
-                        # need to deal with capacity differently. We'll record it instantly instead of waiting for the entire
-                        # op to complete.
-                        capacity_used = self._put_item(table_name, args['Item'], record_capacity=False)
-                        self.tables[table_name]['write_counter'].record(capacity_used)
+                        self._put_item(table_name, args['Item'])
 
                 elif req_type == "DeleteRequest":
                     # TODO: write capacity checks

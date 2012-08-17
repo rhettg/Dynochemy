@@ -51,6 +51,7 @@ class GetSolventTestCase(SolventTestCase):
 
         assert_equal(ret['value'], 25)
 
+
 class SolventCapacityTestCase(SolventTestCase):
     @setup
     def build_db(self):
