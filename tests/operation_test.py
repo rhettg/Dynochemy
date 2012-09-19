@@ -174,6 +174,7 @@ class DoubleSetTestCase(OperationTestCase):
         assert_equal(entity['my_name'], 'slim shady')
         assert_equal(entity['count'], 5)
 
+
 class UpdateCombineTestCase(OperationTestCase):
     def test_add_count(self):
         op_1 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
@@ -201,6 +202,11 @@ class UpdateCombineTestCase(OperationTestCase):
         assert isinstance(full_op, operation.OperationSet)
         assert_equal(len(full_op.update_ops), 1)
 
+        res = full_op.run(self.db)
+
+        # check that the results are available individually
+        assert res[op_1]
+        assert res[op_2]
 
 
 class GetTestCase(OperationTestCase):
