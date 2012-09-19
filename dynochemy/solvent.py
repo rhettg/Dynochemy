@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 
 def classify(table_or_cls):
-    if isinstance(type(table_or_cls), types.ClassType):
+    if table_or_cls.__class__ == type:
         return table_or_cls
     else:
         return table_or_cls.__class__
@@ -59,28 +59,31 @@ class Solvent(object):
         else:
             return operation.OperationSet()
 
+    def add_operation(self, op):
+        self.operations.append(op)
+
     def put(self, table, entity):
         table_cls = classify(table)
         op = operation.PutOperation(table_cls, entity)
-        self.operations.append(op)
+        self.add_operation(op)
         return op
 
     def delete(self, table, key):
         table_cls = classify(table)
         op = operation.DeleteOperation(table_cls, key)
-        self.operations.append(op)
+        self.add_operation(op)
         return op
 
     def update(self, table, key, put=None, add=None, delete=None):
         table_cls = classify(table)
         op = operation.UpdateOperation(table_cls, key, put=put, add=add, delete=delete)
-        self.operations.append(op)
+        self.add_operation(op)
         return op
 
     def get(self, table, key):
         table_cls = classify(table)
         op = operation.GetOperation(table_cls, key)
-        self.operations.append(op)
+        self.add_operation(op)
         return op
 
     def query(self, table):
@@ -104,40 +107,81 @@ class Solvent(object):
         df.add_callback(handle_result)
 
     def run_defer(self, db):
+        # This is a tough little chunk of code. Not really clear how to
+        # refactor to make easier, so I'll try to write a quick overview.
+        # Basically, our entire solvent is running under a single defer object
+        # ('final_df'), which will be called back with the entire defer is
+        # complete. The argument to that callback will be a 'OperationResult'
+        # object which provides a mapping from operation to result.
+
+        # During each attempt inside this defer, we'll take all our operations,
+        # combine them together into a single operation and run it.  If, after
+        # processing the results of that operation (in handle_result), there
+        # are additional operations to run, or operations which need to be
+        # tried again due to certain failures, we'll do another loop if it.
         final_results = operation.OperationResult(db)
         final_df = operation.OperationResultDefer(final_results, db.ioloop)
 
+        # Note: our attempts counter exists outside the closure, and do to
+        # scoping rules, if we want a counter we need to put it in an array so
+        # it persists. I know it's weird, but go ahead and try it.
+
+        # How many attempts (usually due to a failure)
         attempts = [0]
+
+        # How many actual iterations have we gone through
+        steps = [0]
+
         def handle_result(cb):
+            has_retry_failures = False
             remaining_ops = []
             results, err = cb.result
             for op, (r, err) in results.iteritems():
+                # Certain types of errors we know we can try again just be re-executing the same operation.
+                # Other errors, or successes, we'll just record and carry on.
                 if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
                     log.debug("Provisioning error for %r on table %r", op, op.table.name)
                     remaining_ops.append(op)
+                    has_retry_failures = True
                 else:
-                    final_results.record_result(op, (r, err))
+                    # It's possible that upon recording results, an operation
+                    # may have a follow-up operation. So we'll add taht to our
+                    # remaining ops.
+                    next_op = final_results.record_result(op, (r, err))
+                    if next_op:
+                        remaining_ops.append(next_op)
 
             # We've updated individual results piecemeal, but we're going to
             # need our capacity values as well.
             final_results.update_write_capacity(results.write_capacity)
             final_results.update_read_capacity(results.read_capacity)
 
-            log.debug("%d remaining operations on attempt %d", len(remaining_ops), attempts[0])
+            log.debug("%d remaining operations after attempt %d", len(remaining_ops), steps[0])
+
             if remaining_ops and attempts[0] < MAX_ATTEMPTS:
-                attempts[0] += 1
+                steps[0] += 1
+
                 # We need to queue another operation
                 def run_next_ops():
                     next_df = reduce(operation.reduce_operations, remaining_ops).run_defer(db)
                     next_df.add_callback(handle_result)
 
-                delay_secs = 0.8 * attempts[0]
-                log.debug("Trying again in %.1f seconds", delay_secs)
-                if db.ioloop:
-                    db.ioloop.add_timeout(time.time() + delay_secs, run_next_ops)
+                if has_retry_failures:
+                    # We only track attempts if we are doing more because of failures.
+                    attempts[0] += 1
+                    delay_secs = 0.8 * attempts[0]
+                    log.debug("Trying again in %.1f seconds", delay_secs)
+
+                    if db.ioloop:
+                        db.ioloop.add_timeout(time.time() + delay_secs, run_next_ops)
+                    else:
+                        # No ioloop, do it inline
+                        time.sleep(delay_secs)
+                        run_next_ops()
                 else:
-                    time.sleep(delay_secs)
+                    log.debug("Running our next batch (No failures)")
                     run_next_ops()
+
             elif remaining_ops:
                 log.warning("Gave up after %d attempts", attempts[0])
                 final_df.callback(cb)

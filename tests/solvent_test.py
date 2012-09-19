@@ -52,7 +52,7 @@ class GetSolventTestCase(SolventTestCase):
         assert_equal(ret['value'], 25)
 
 
-class SolventCapacityTestCase(SolventTestCase):
+class SolventCapacityTestCase(TestCase):
     @setup
     def build_db(self):
         engine = sqlalchemy.create_engine("sqlite://")
@@ -91,5 +91,23 @@ class SolventCapacityTestCase(SolventTestCase):
             assert not err, err
             assert entity['key']
 
+
+class SolventSequenceTestCase(SolventTestCase):
+    @setup
+    def build_by_two_op(self):
+        class ByTwoOperation(operation.UpdateOperation):
+            def result(self, r):
+                # return an equivalent update operation
+                return operation.UpdateOperation(self.table, self.key, add=self.add)
+
+        self.op = ByTwoOperation(self.db.TestTable.__class__, 'rhettg', add={'value': 1})
+
+    def test(self):
+        solvent = Solvent()
+        solvent.add_operation(self.op)
+        solvent.run(self.db)
+
+        for res in self.db.TestTable.scan()():
+            assert_equal(res['value'], 2)
 
 

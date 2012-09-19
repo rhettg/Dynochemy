@@ -42,7 +42,7 @@ class View(object):
         if isinstance(op, operation.PutOperation):
             return self.add(op.entity)
         elif isinstance(op, operation.DeleteOperation):
-            return self.remote(op.entity)
+            return self.remove(op.entity)
         elif isinstance(op, operation.UpdateOperation):
             log.warning("View %s doesn't know how to handle an update", self)
         else:

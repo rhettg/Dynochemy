@@ -51,9 +51,6 @@ class BaseDB(object):
         return self._tables_by_db_name[name]
 
     def views_by_table(self, table):
-        if table.__name__ not in self.tables:
-            raise ValueError
-
         return self._views_by_table[table.__name__]
 
     def batch_write(self):
@@ -508,7 +505,7 @@ class WriteBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
-        if len(self._requests) >= contants.MAX_BATCH_WRITE_ITEMS:
+        if len(self._requests) >= constants.MAX_BATCH_WRITE_ITEMS:
             raise Error("Too many requests")
 
         self._request_defer[req_key] = df
@@ -588,7 +585,7 @@ class ReadBatch(Batch):
         else:
             request = (table.name, (key,))
 
-        if len(self._requests) >= contants.MAX_BATCH_READ_ITEMS:
+        if len(self._requests) >= constants.MAX_BATCH_READ_ITEMS:
             raise Error("Too many requests")
 
         self._request_defer[request] = df

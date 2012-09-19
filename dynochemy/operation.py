@@ -64,6 +64,12 @@ class Operation(object):
 
         df.add_callback(handle_result)
 
+    def result(self, result):
+        """Called when a result for this operation is available.
+
+        May return another operation that should be executed next. This is useful for operations that must happen in a sequence.
+        """
+        return None
 
 
 class OperationSet(Operation):
@@ -345,7 +351,7 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
             if all(df.done for df in all_batch_defers) and not df.done:
                 df.callback(cb)
 
-        for op_set in utils.segment(self.ops, contants.MAX_BATCH_READ_ITEMS):
+        for op_set in utils.segment(self.ops, constants.MAX_BATCH_READ_ITEMS):
             batch = db.batch_read()
             for op in op_set:
                 op_df = op.add_to_batch(batch)
@@ -489,6 +495,8 @@ class OperationResult(object):
 
         if write_capacity:
             self.update_write_capacity(write_capacity)
+
+        return op.result(result)
 
     def rethrow(self):
         for op, (_, err) in self.iteritems():

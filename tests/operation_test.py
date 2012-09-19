@@ -7,6 +7,7 @@ from testify import *
 from dynochemy import db, Table
 from dynochemy import sql
 from dynochemy import operation
+from dynochemy import constants
 
 class TestTable(Table):
     name = "test"
@@ -257,12 +258,12 @@ class MultiGetTestCase(OperationTestCase):
 class MultiBatchReadTestCase(OperationTestCase):
     @setup
     def max_items(self):
-        self.orig_max_items = db.ReadBatch.MAX_ITEMS
-        db.ReadBatch.MAX_ITEMS = 2
+        self.orig_max_items = constants.MAX_BATCH_READ_ITEMS
+        constants.MAX_BATCH_READ_ITEMS = 2
 
     @teardown
     def un_max_items(self):
-        db.ReadBatch.MAX_ITEMS = self.orig_max_items
+        constants.MAX_BATCH_READ_ITEMS = self.orig_max_items
 
     @setup
     def build_entities(self):
