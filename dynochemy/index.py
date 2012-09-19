@@ -17,4 +17,3 @@ class Index(object):
     def remove(self, entity):
         pass
 
-

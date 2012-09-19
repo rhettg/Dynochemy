@@ -7,9 +7,9 @@ from testify import *
 from dynochemy import db
 from dynochemy import operation
 from dynochemy import sql
-from dynochemy import Table, Index
+from dynochemy import Table
 
-class TestIndex(Index):
+class TestIndex(object):
     @classmethod
     def add(self, entity):
         return [operation.UpdateOperation(TestTable, "__totals__", put={'type': 'counter'}, add={'%s_count' % entity['type']: entity['count']})]

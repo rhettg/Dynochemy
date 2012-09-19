@@ -204,7 +204,6 @@ class UpdateCombineTestCase(OperationTestCase):
 
         res = full_op.run(self.db)
 
-        # check that the results are available individually
         assert res[op_1]
         assert res[op_2]
 

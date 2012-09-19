@@ -23,7 +23,7 @@ from . import utils
 from .db import DB
 from .db import Table
 from .db import run_all
-from .index import Index
+from .view import View
 from .solvent import Solvent
 from .sql import SQLDB
 from .errors import *

@@ -19,6 +19,7 @@ from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, Unproces
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
+from . import view
 
 
 log = logging.getLogger(__name__)
@@ -30,10 +31,14 @@ class BaseDB(object):
         self.ioloop = None
         self.tables = {}
         self._tables_by_db_name = {}
+        self._views_by_table = collections.defaultdict(list)
 
-    def register(self, table, create=False):
-        self.tables[table.__name__] = instance = table(self)
-        self._tables_by_db_name[table.name] = instance
+    def register(self, cls, create=False):
+        if issubclass(cls, Table):
+            self.tables[cls.__name__] = instance = cls(self)
+            self._tables_by_db_name[cls.name] = instance
+        elif issubclass(cls, view.View):
+            self._views_by_table[cls.table.__name__].append(cls(self))
 
     def __getattr__(self, name):
         try:
@@ -43,6 +48,12 @@ class BaseDB(object):
 
     def table_by_name(self, name):
         return self._tables_by_db_name[name]
+
+    def views_by_table(self, table):
+        if table.__name__ not in self.tables:
+            raise ValueError
+
+        return self._views_by_table[table.__name__]
 
     def batch_write(self):
         return WriteBatch(self)
