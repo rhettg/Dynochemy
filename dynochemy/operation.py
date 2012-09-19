@@ -15,7 +15,7 @@ import functools
 from . import errors
 from . import defer
 from . import utils
-from . import db as db_mod
+from . import constants
 
 class ReduceError(errors.Error): pass
 
@@ -299,7 +299,7 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
             if all(df.done for df in all_batch_defers) and not df.done:
                 df.callback(cb)
 
-        for op_set in utils.segment(self.ops, db_mod.WriteBatch.MAX_ITEMS):
+        for op_set in utils.segment(self.ops, constants.MAX_BATCH_WRITE_ITEMS):
             batch = db.batch_write()
             for op in op_set:
                 op_df = op.add_to_batch(batch)
@@ -345,7 +345,7 @@ class BatchReadOperation(Operation, _ReadBatchableMixin):
             if all(df.done for df in all_batch_defers) and not df.done:
                 df.callback(cb)
 
-        for op_set in utils.segment(self.ops, db_mod.ReadBatch.MAX_ITEMS):
+        for op_set in utils.segment(self.ops, contants.MAX_BATCH_READ_ITEMS):
             batch = db.batch_read()
             for op in op_set:
                 op_df = op.add_to_batch(batch)

@@ -471,7 +471,8 @@ class SQLDB(db.BaseDB):
 
     def register(self, table, create=False):
         super(SQLDB, self).register(table)
-        self.client.register_table(table)
+        if issubclass(table, db.Table):
+            self.client.register_table(table)
 
 
 if __name__  == '__main__':

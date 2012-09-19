@@ -20,6 +20,7 @@ from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
 from . import view
+from . import constants
 
 
 log = logging.getLogger(__name__)
@@ -474,8 +475,6 @@ class BatchTable(object):
 
 
 class WriteBatch(Batch):
-    MAX_ITEMS = 25
-
     def put(self, table, value):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
@@ -486,7 +485,7 @@ class WriteBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
-        if len(self._requests) >= self.MAX_ITEMS:
+        if len(self._requests) >= constants.MAX_BATCH_WRITE_ITEMS:
             raise Error("Too many requests")
 
         self._request_defer[req_key] = df
@@ -509,7 +508,7 @@ class WriteBatch(Batch):
 
         log.debug("Building request %r", req_key)
 
-        if len(self._requests) >= self.MAX_ITEMS:
+        if len(self._requests) >= contants.MAX_BATCH_WRITE_ITEMS:
             raise Error("Too many requests")
 
         self._request_defer[req_key] = df
@@ -575,8 +574,6 @@ class WriteBatch(Batch):
 
 
 class ReadBatch(Batch):
-    MAX_ITEMS = 100
-
     def get(self, table, key):
         df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
         if table.has_range:
@@ -591,7 +588,7 @@ class ReadBatch(Batch):
         else:
             request = (table.name, (key,))
 
-        if len(self._requests) >= self.MAX_ITEMS:
+        if len(self._requests) >= contants.MAX_BATCH_READ_ITEMS:
             raise Error("Too many requests")
 
         self._request_defer[request] = df

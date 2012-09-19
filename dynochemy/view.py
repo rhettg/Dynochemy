@@ -14,12 +14,17 @@ included in the same batch of updates.
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 """
+from . import operation
 
 def view_operations(db, op):
     """Given the 'db' as context, find all our views and generate additional
     operations that should result from the user supplied operation
     """
-    return []
+    out = []
+    for view in db.views_by_table(op.table):
+        out += view.operations_for_operation(op)
+
+    return out
 
 
 class View(object):
@@ -32,6 +37,16 @@ class View(object):
 
     def __init__(self, db):
         self.db = db
+
+    def operations_for_operation(self, op):
+        if isinstance(op, operation.PutOperation):
+            return self.add(op.entity)
+        elif isinstance(op, operation.DeleteOperation):
+            return self.remote(op.entity)
+        elif isinstance(op, operation.UpdateOperation):
+            log.warning("View %s doesn't know how to handle an update", self)
+        else:
+            raise NotImplementedError(op)
 
     def add(self, entity):
         return []

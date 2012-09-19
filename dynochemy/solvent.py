@@ -12,6 +12,7 @@ and then running it.
 import time
 import logging
 import copy
+import types
 
 from . import operation
 from . import view
@@ -20,6 +21,12 @@ from . import errors
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
+
+def classify(table_or_cls):
+    if isinstance(type(table_or_cls), types.ClassType):
+        return table_or_cls
+    else:
+        return table_or_cls.__class__
 
 class Solvent(object):
     """A solvent is a abstraction over Dynochemy database operations where
@@ -53,22 +60,26 @@ class Solvent(object):
             return operation.OperationSet()
 
     def put(self, table, entity):
-        op = operation.PutOperation(table, entity)
+        table_cls = classify(table)
+        op = operation.PutOperation(table_cls, entity)
         self.operations.append(op)
         return op
 
     def delete(self, table, key):
-        op = operation.DeleteOperation(table, key)
+        table_cls = classify(table)
+        op = operation.DeleteOperation(table_cls, key)
         self.operations.append(op)
         return op
 
     def update(self, table, key, put=None, add=None, delete=None):
-        op = operation.UpdateOperation(table, key, put=put, add=add, delete=delete)
+        table_cls = classify(table)
+        op = operation.UpdateOperation(table_cls, key, put=put, add=add, delete=delete)
         self.operations.append(op)
         return op
 
     def get(self, table, key):
-        op = operation.GetOperation(table, key)
+        table_cls = classify(table)
+        op = operation.GetOperation(table_cls, key)
         self.operations.append(op)
         return op
 
