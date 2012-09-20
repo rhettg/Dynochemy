@@ -486,6 +486,8 @@ class OperationResult(object):
         self.read_capacity = {}
         self.write_capacity = {}
 
+        self.next_ops = []
+
     def record_result(self, op, result, read_capacity=None, write_capacity=None):
         self.results[op] = result
 
@@ -495,7 +497,11 @@ class OperationResult(object):
         if write_capacity:
             self.update_write_capacity(write_capacity)
 
-        return op.result(result)
+        next_ops = op.result(result)
+        if next_ops:
+            self.next_ops += next_ops
+
+        return next_ops
 
     def rethrow(self):
         for op, (_, err) in self.iteritems():
@@ -509,6 +515,8 @@ class OperationResult(object):
 
         self.update_read_capacity(other_result.read_capacity)
         self.update_write_capacity(other_result.write_capacity)
+
+        self.next_ops += other_result.next_ops
 
     def update_read_capacity(self, read_capacity):
         for name, value in read_capacity.iteritems():

@@ -129,17 +129,19 @@ class Solvent(object):
                     log.debug("Provisioning error for %r on table %r", op, op.table.name)
                     remaining_ops.add(op)
                 else:
-                    # It's possible that upon recording results, an operation
-                    # may have a follow-up operation. So we'll add taht to our
-                    # remaining ops.
-                    next_ops = final_results.record_result(op, (r, err))
-                    if next_ops:
-                        # We have more operations. Create or add these operations to the next
-                        # step in the sequence.
-                        if len(op_sequence) <= 1:
-                            op_sequence.append(operation.OperationSet())
-                        for op in next_ops:
-                            op_sequence[1].add(op)
+                    final_results.record_result(op, (r, err))
+
+
+            # It's possible that upon recording results, an operation
+            # may have a follow-up operation. So we'll add taht to our
+            # remaining ops.
+            if results.next_ops:
+                # We have more operations. Create or add these operations to the next
+                # step in the sequence.
+                if len(op_sequence) <= 1:
+                    op_sequence.append(operation.OperationSet())
+                for op in results.next_ops:
+                    op_sequence[1].add(op)
 
             # We've updated individual results piecemeal, but we're going to
             # need our capacity values as well.
