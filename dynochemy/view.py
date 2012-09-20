@@ -27,6 +27,24 @@ def view_operations(db, op):
     return out
 
 
+class GetAndRemoveOperation(operation.GetOperation):
+    """To remove an entity from a view, you really need to know what the entity is.
+
+    This operation is a sequence that first retrieves the entity to be removed and then
+    passes it along to the view's remove() call so it can generate it's own operation.
+    """
+    def __init__(self, table, key, view):
+        super(GetAndRemoveOperation, self).__init__(table, key)
+        self.view = view
+
+    def result(self, result):
+        entity, err = result
+        if err:
+            return None
+
+        return self.view.remove(entity)
+
+
 class View(object):
     # The table used as input for this view. The view will be informed by
     # updates to this table.
@@ -42,7 +60,7 @@ class View(object):
         if isinstance(op, operation.PutOperation):
             return self.add(op.entity)
         elif isinstance(op, operation.DeleteOperation):
-            return self.remove(op.entity)
+            return [GetAndRemoveOperation(op.table, op.key, self)]
         elif isinstance(op, operation.UpdateOperation):
             log.warning("View %s doesn't know how to handle an update", self)
         else:
