@@ -115,15 +115,19 @@ class UpdateTestCase(OperationTestCase):
         assert_equal(result[self.op][0]['count'], 2)
 
 
-class ReduceSimpleTestCase(OperationTestCase):
+class OperationSetSimpleTestCase(OperationTestCase):
     def test(self):
+        op_set = operation.OperationSet()
         op_1 = operation.PutOperation(TestTable, {'key': 'hello', 'count': 0})
-        op_2 = operation.PutOperation(TestTable, {'key': 'world', 'count': 1})
-        op_3 = operation.PutOperation(TestTable, {'key': 'you', 'count': 2})
+        op_set.add(op_1)
 
-        full_op = reduce(operation.reduce_operations, [op_1, op_2, op_3])
-        assert isinstance(full_op, operation.BatchWriteOperation)
-        result = full_op.run(self.db)
+        op_2 = operation.PutOperation(TestTable, {'key': 'world', 'count': 1})
+        op_set.add(op_2)
+
+        op_3 = operation.PutOperation(TestTable, {'key': 'you', 'count': 2})
+        op_set.add(op_3)
+
+        result = op_set.run(self.db)
 
         entity_1 = self.db.TestTable.get('hello')
         assert_equal(entity_1['count'], 0)
@@ -145,12 +149,13 @@ class ReduceSimpleTestCase(OperationTestCase):
         assert not err
 
 
-class ReduceUpdateTestCase(OperationTestCase):
+class CombineUpdateTestCase(OperationTestCase):
     def test(self):
+        op_set = operation.OperationSet()
         op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
-        full_op = reduce(operation.reduce_operations, [op, op, op])
+        [op_set.add(op) for _ in range(3)]
 
-        result = full_op.run(self.db)
+        result = op_set.run(self.db)
 
         entity = self.db.TestTable.get('hello')
         assert_equal(entity['my_name'], 'slim shady')
@@ -158,22 +163,6 @@ class ReduceUpdateTestCase(OperationTestCase):
 
         val, err = result[op]
         assert not err
-
-
-class DoubleSetTestCase(OperationTestCase):
-    def test(self):
-        op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
-        op_set_1 = reduce(operation.reduce_operations, [op, op])
-
-        op_set_2 = reduce(operation.reduce_operations, [op, op, op])
-
-        full_op = reduce(operation.reduce_operations, [op_set_1, op_set_2])
-
-        full_op.run(self.db)
-
-        entity = self.db.TestTable.get('hello')
-        assert_equal(entity['my_name'], 'slim shady')
-        assert_equal(entity['count'], 5)
 
 
 class UpdateCombineTestCase(OperationTestCase):
@@ -194,19 +183,6 @@ class UpdateCombineTestCase(OperationTestCase):
 
         assert_equal(full_op.delete['my_name'], None)
         assert_equal(full_op.add['count'], "hello world")
-
-    def test_in_operation_set(self):
-        op_1 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
-        op_2 = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 2})
-
-        full_op = reduce(operation.reduce_operations, [op_1, op_2, op_1, op_2])
-        assert isinstance(full_op, operation.OperationSet)
-        assert_equal(len(full_op.update_ops), 1)
-
-        res = full_op.run(self.db)
-
-        assert res[op_1]
-        assert res[op_2]
 
 
 class GetTestCase(OperationTestCase):
@@ -239,11 +215,13 @@ class MultiGetTestCase(OperationTestCase):
 
 
     def test(self):
+        op_set = operation.OperationSet()
         op_1 = operation.GetOperation(TestTable, "hello")
+        op_set.add(op_1)
         op_2 = operation.GetOperation(TestTable, "world")
-        full_op = reduce(operation.reduce_operations, [op_1, op_2])
+        op_set.add(op_2)
 
-        result = full_op.run(self.db)
+        result = op_set.run(self.db)
 
         entity, err = result[op_1]
         if err:
@@ -275,10 +253,11 @@ class MultiBatchReadTestCase(OperationTestCase):
             self.db.TestTable.put(entity)
 
     def test(self):
+        op_set = operation.OperationSet()
         ops = [operation.GetOperation(TestTable, key) for key in self.keys]
-        full_op = reduce(operation.reduce_operations, ops)
+        [op_set.add(op) for op in ops]
 
-        results = full_op.run(self.db)
+        results = op_set.run(self.db)
         for key, op in zip(self.keys, ops):
             val, err = results[op]
             assert not err
@@ -307,8 +286,8 @@ class MutliReadWriteUpdateTestCase(OperationTestCase):
         ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLAH', 'value': 42}))
         ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLARGH', 'value': 44}))
 
-        full_op = reduce(operation.reduce_operations, ops)
-        results = full_op.run(self.db)
+        op_set = operation.OperationSet(ops)
+        results = op_set.run(self.db)
 
         for op in ops[:4]:
             assert results[op]

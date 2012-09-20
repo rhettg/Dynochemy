@@ -5,7 +5,18 @@ This module contains classes for abstract Dynochemy operations.
 This abstraction is a framework for combining multiple operations into sets of
 operations that can be exectuted together.
 
-A key part of the interface is to use 'reduce' to combine operations together.
+There are a few levels of usage here:
+
+    * Primitive Operations (Get, Put, Delete, Update)
+    * Combined Operations (BatchRead, BatchWrite)
+    * OperationsSet (operations and combined operations that can be run at one time)
+    * OperationSequence (a sequence of operation sets that must be run in order. stops on failure)
+
+Note that any instance of 'Operation' can be run individually.
+
+Another interesting object is the OperationResult, which provides a way for
+results to be store the result of a combined operation, but keyed by primitive
+operation.
 
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
@@ -17,24 +28,11 @@ from . import defer
 from . import utils
 from . import constants
 
-class ReduceError(errors.Error): pass
-
-
-def reduce_operations(left_op, right_op):
-    try:
-        return left_op.reduce(right_op)
-    except ValueError:
-        try:
-            return right_op.reduce(left_op)
-        except ValueError:
-            raise ReduceError("No path for %s to %s", left_op.__class__.__name__, right_op.__class__.__name__)
-
 
 class Operation(object):
-    #def reduce(self, op):
-        #op = OperationSet()
-        #op = op.reduce(self)
-        #return op.reduce(op)
+    """(Abstract)Base class for all operations.
+
+    """
 
     def run_defer(self, db):
         raise NotImplementedError
@@ -73,42 +71,33 @@ class Operation(object):
 
 
 class OperationSet(Operation):
-    """Operation that does multiple sub-operations"""
-    def __init__(self):
+    """Operation that does multiple sub-operations
+
+    When a OperationSet is executed, multiple sub-requests may go to the
+    database simulaneously (in the case of async operation).
+
+    Because of that, within an operation set there is no guarantee about the
+    order in which operations will be executed.
+    """
+    def __init__(self, operation_list=None):
         # Really we can combine everything into into two operations
         self.update_ops = []
         self.batch_write_op = BatchWriteOperation()
         self.batch_read_op = BatchReadOperation()
 
-    def reduce(self, op):
-        op_set = OperationSet()
+        if operation_list:
+            for op in operation_list:
+                self.add(op)
 
-        for update in self.update_ops:
-            op_set.add_update(update)
-
-        op_set.batch_write_op = self.batch_write_op
-        op_set.batch_read_op = self.batch_read_op
-
-        if isinstance(op, OperationSet):
-            for update_op in op.update_ops:
-                op_set.add_update(update_op)
-
-            op_set.batch_write_op = op_set.batch_write_op.reduce(op.batch_write_op)
-            op_set.batch_read_op = op_set.batch_read_op.reduce(op.batch_read_op)
-
-        elif isinstance(op, _WriteBatchableMixin):
-            op_set.batch_write_op = self.batch_write_op.reduce(op)
-
+    def add(self, op):
+        if isinstance(op, _WriteBatchableMixin):
+            self.batch_write_op.add(op)
         elif isinstance(op, _ReadBatchableMixin):
-            op_set.batch_read_op = self.batch_read_op.reduce(op)
-
+            self.batch_read_op.add(op)
         elif isinstance(op, UpdateOperation):
-            op_set.add_update(op)
-
+            self.add_update(op)
         else:
-            raise ValueError(op)
-
-        return op_set
+            raise ValueError("Don't know how to add op %r" % op)
 
     def add_update(self, update_op):
         # We could keep just a list of all updates and then execute them
@@ -207,15 +196,6 @@ class UpdateOperation(Operation):
         self.put = put
         self.delete = delete
 
-    def reduce(self, op):
-        if isinstance(op, UpdateOperation):
-            op_set = OperationSet()
-            op_set.update_ops.append(self)
-            op_set.update_ops.append(op)
-            return op_set
-        else:
-            return OperationSet().reduce(self).reduce(op)
-
     def combine_updates(self, update_op):
         """Combine two UpdateOperations assuming they are for the same table/key combination"""
         assert self.table == update_op.table
@@ -258,27 +238,11 @@ class UpdateOperation(Operation):
 
 class _WriteBatchableMixin(object):
     """Mixing for operations that can be put in a batch write"""
-    def reduce(self, op):
-        if isinstance(op, _WriteBatchableMixin):
-            batch_op = BatchWriteOperation()
-            batch_op.add(self)
-            batch_op.add(op)
-            return batch_op
-        else:
-            op_set = OperationSet()
-            return op_set.reduce(self).reduce(op)
+    pass
 
 class _ReadBatchableMixin(object):
     """Mixing for operations that can be put in a batch read"""
-    def reduce(self, op):
-        if isinstance(op, _ReadBatchableMixin):
-            batch_op = BatchReadOperation()
-            batch_op.add(self)
-            batch_op.add(op)
-            return batch_op
-        else:
-            op_set = OperationSet()
-            return op_set.reduce(self).reduce(op)
+    pass
 
 
 class BatchWriteOperation(Operation, _WriteBatchableMixin):
