@@ -188,47 +188,6 @@ class Solvent(object):
         return final_df
 
 
-class Sequence(object):
-    """object to manage sets of operations which should be executed in order."""
-
-    def __init__(self, op_set=None):
-        self.operation_sets = op_set or []
-        self.ndx = 0
-
-    @property
-    def current(self):
-        """Returns the current operation set"""
-        if len(self.operation_sets) == 0:
-            op_set = operation.OperationSet()
-            self.operation_sets.append(op_set)
-
-        return self.operation_sets[0]
-
-    @property
-    def previous(self):
-        """Returns an operation before the current"""
-        op_set = operation.OperationSet()
-        self.operation_sets.insert(0, op_set)
-        return op_set
-
-    @property
-    def next(self):
-        """Returns the next operation set"""
-        if len(self.operation_sets) > 1:
-            return self.operation_sets[1]
-        else:
-            op_set = operation.OperationSet()
-            self.operation_sets.append(op_set)
-            return op_set
-
-    def pop(self):
-        """Remove the current set, as it must be complete"""
-        return self.operation_sets.pop(0)
-
-    def __len__(self):
-        return len(self.operation_sets)
-
-
 if __name__ == '__main__':
 
     class TestTable(Table):
