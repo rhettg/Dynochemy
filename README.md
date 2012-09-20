@@ -9,7 +9,7 @@ Features
 
 - Synchronous and Async Support (using Tornado)
 - Full API abstraction (rather than needing to know internals of how Dynamo actually needs it's JSON formatted.
-- High-level constructs for dealing with provisioning throughput limits
+- High-level constructs for dealing with provisioning throughput limits and maintaining secondary indexes.
 - SQL-backend for testing 
 
 Status
@@ -18,6 +18,12 @@ Under heavy development, just barely functioning. I would stay away except for
 experimental use or you really want to get involved with development yourself.
 
 Really just useful for seeing how the API would work if this library was completed
+
+### Known TODOs
+
+  * Solvent: Needs query and scan support
+  * Views: Need the ability to regenerate views from scratch, or even partial rewrites to help with failure scenarios.
+  * Solvent: Need throttling support rather than always hammer until provisioning error.
 
 Example Use
 ---
@@ -117,6 +123,32 @@ retried a few times, after a delay. Each call to add an operation returns an
 operation object that can be used as a key to get the resulting values and
 errors.
 
+### Views
+
+In addition to intelligently combining operations together for better performance, a solvent can maintain 'views'.
+
+A view is another table full of calculated, or processed data, based on data in the original table. So for example, if you
+wanted to create counts of how many entities in your table had a certain value, you could create a view.
+
+    class CountTable(Table):
+        table_name = 'count_table'
+        hash_key = 'value'
+
+    class EntityValueCountView(View):
+        table = EntityTable
+        view_table = CountTable
+
+        def add(self, entity):
+            return [UpdateOperation(self.view_table, entity['value'], add={'count': 1})]
+        def remove(self, entity):
+            return [UpdateOperation(self.view_table, entity['value'], add={'count': -1})]
+
+    db.register(CountTable)
+    db.register(EntityValueCountView)
+
+After registering the view, any writes to the 'EntityTable' using a solvent
+will also be run through your view implementation, allowing the secondary table
+be kept in perfect sync.
 
 SQL-Backed Dynochemy
 ----
