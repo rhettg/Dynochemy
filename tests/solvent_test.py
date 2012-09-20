@@ -98,7 +98,7 @@ class SolventSequenceTestCase(SolventTestCase):
         class ByTwoOperation(operation.UpdateOperation):
             def result(self, r):
                 # return an equivalent update operation
-                return operation.UpdateOperation(self.table, self.key, add=self.add)
+                return [operation.UpdateOperation(self.table, self.key, add=self.add)]
 
         self.op = ByTwoOperation(self.db.TestTable.__class__, 'rhettg', add={'value': 1})
 

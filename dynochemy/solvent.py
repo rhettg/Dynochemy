@@ -147,9 +147,9 @@ class Solvent(object):
                     # It's possible that upon recording results, an operation
                     # may have a follow-up operation. So we'll add taht to our
                     # remaining ops.
-                    next_op = final_results.record_result(op, (r, err))
-                    if next_op:
-                        remaining_ops.append(next_op)
+                    next_ops = final_results.record_result(op, (r, err))
+                    if next_ops:
+                        remaining_ops += next_ops
 
             # We've updated individual results piecemeal, but we're going to
             # need our capacity values as well.
