@@ -4,7 +4,7 @@ import pprint
 import sqlalchemy
 
 from testify import *
-from dynochemy import db, Table, Solvent
+from dynochemy import db, Table, Solvent, View
 from dynochemy import sql
 from dynochemy import operation
 from dynochemy import operation
@@ -110,4 +110,45 @@ class SolventSequenceTestCase(SolventTestCase):
         for res in self.db.TestTable.scan()():
             assert_equal(res['value'], 2)
 
+
+class SolventViewTestCase(SolventTestCase):
+    @setup
+    def build_view(self):
+        class ViewTable(Table):
+            name = "view_table"
+            hash_key = 'value'
+
+        self.ViewTable = ViewTable
+        self.db.register(ViewTable)
+
+        class TestView(View):
+            table = TestTable
+            view_table = ViewTable
+
+            def add(self, entity):
+                return [operation.UpdateOperation(self.view_table, entity['value'], {'count': 1})]
+            def remove(self, entity):
+                return [operation.UpdateOperation(self.view_table, entity['value'], {'count': -1})]
+
+        self.TestView = TestView
+        self.db.register(TestView)
+
+    def test(self):
+        s = Solvent()
+        s.put(TestTable, {'key': '1', 'value': 'blue'})
+        s.put(TestTable, {'key': '2', 'value': 'green'})
+        s.put(TestTable, {'key': '3', 'value': 'blue'})
+
+        s.run(self.db)
+
+        assert_equal(self.db.ViewTable['green']['count'], 1)
+        assert_equal(self.db.ViewTable['blue']['count'], 2)
+
+        s = Solvent()
+        s.delete(TestTable, '1')
+        s.delete(TestTable, '2')
+        s.run(self.db)
+
+        assert_equal(self.db.ViewTable['green']['count'], 0)
+        assert_equal(self.db.ViewTable['blue']['count'], 1)
 
