@@ -8,11 +8,12 @@ operations that can be exectuted together.
 There are a few levels of usage here:
 
     * Primitive Operations (Get, Put, Delete, Update)
-    * Combined Operations (BatchRead, BatchWrite)
-    * OperationsSet (operations and combined operations that can be run at one time)
+    * Combined Operations (single requests with multiple operations in them: BatchRead, BatchWrite)
+    * OperationsSet (operations and combined operations that can be run simulataneously)
     * OperationSequence (a sequence of operation sets that must be run in order. stops on failure)
 
-Note that any instance of 'Operation' can be run individually.
+Note that any instance of 'Operation' can be run individually, but the real
+power come from allowing a higher power to manage the execution (see solvent)
 
 Another interesting object is the OperationResult, which provides a way for
 results to be store the result of a combined operation, but keyed by primitive
@@ -22,6 +23,7 @@ operation.
 :license: ISC, see LICENSE for more details.
 """
 import functools
+import itertools
 
 from . import errors
 from . import defer
@@ -88,6 +90,16 @@ class OperationSet(Operation):
         if operation_list:
             for op in operation_list:
                 self.add(op)
+
+    def __len__(self):
+        return len(self.update_ops) + len(self.batch_write_op) + len(self.batch_read_op)
+
+    def __copy__(self):
+        return OperationSet(list(self))
+
+    def __iter__(self):
+        for op in itertools.chain(self.update_ops, self.batch_write_op, self.batch_read_op):
+            yield op
 
     def add(self, op):
         if isinstance(op, _WriteBatchableMixin):
@@ -238,14 +250,17 @@ class UpdateOperation(Operation):
 
 class _WriteBatchableMixin(object):
     """Mixing for operations that can be put in a batch write"""
-    pass
+    def add_to_batch(self, batch):
+        raise NotImplementedError
+
 
 class _ReadBatchableMixin(object):
     """Mixing for operations that can be put in a batch read"""
-    pass
+    def add_to_batch(self, batch):
+        raise NotImplementedError
 
 
-class BatchWriteOperation(Operation, _WriteBatchableMixin):
+class BatchWriteOperation(Operation):
     __slots__ = ["ops"]
     def __init__(self):
         self.ops = set()
@@ -258,6 +273,13 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
             self.ops.update(op.ops)
         else:
             self.ops.add(op)
+
+    def __len__(self):
+        return len(self.ops)
+
+    def __iter__(self):
+        for op in self.ops:
+            yield op
 
     def run_defer(self, db):
         result = OperationResult(db)
@@ -290,10 +312,17 @@ class BatchWriteOperation(Operation, _WriteBatchableMixin):
         return df
 
 
-class BatchReadOperation(Operation, _ReadBatchableMixin):
+class BatchReadOperation(Operation):
     __slots__ = ["ops"]
     def __init__(self):
         self.ops = set()
+
+    def __len__(self):
+        return len(self.ops)
+
+    def __iter__(self):
+        for op in self.ops:
+            yield op
 
     def add(self, op):
         if not isinstance(op, _ReadBatchableMixin):

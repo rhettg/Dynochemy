@@ -14,17 +14,40 @@ included in the same batch of updates.
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
 """
+import copy
+
 from . import operation
 
-def view_operations(db, op):
+def view_operations(db, op_sequence):
     """Given the 'db' as context, find all our views and generate additional
     operations that should result from the user supplied operation
     """
-    out = []
-    for view in db.views_by_table(op.table):
-        out += view.operations_for_operation(op)
+    new_op_seq = []
+    for op_set in op_sequence:
+        seq_current_ops = []
+        seq_prev_ops = []
 
-    return out
+        for op in op_set:
+            for view in db.views_by_table(op.table):
+                prev_ops, current_ops = view.operations_for_operation(op)
+                seq_prev_ops += prev_ops
+                seq_current_ops += current_ops
+
+        new_op_set = copy.copy(op_set)
+        for new_op in seq_current_ops:
+            new_op_set.add(new_op)
+
+        new_op_seq.append(new_op_set)
+
+        if seq_prev_ops:
+            # If we don't have a previous operation set, add one
+            if len(new_op_seq) == 1:
+                new_op_seq.insert(-1, operation.OperationSet())
+
+            for new_op in seq_prev_ops:
+                new_op_seq[-2].add(new_op)
+
+    return new_op_seq
 
 
 class GetAndRemoveOperation(operation.GetOperation):
@@ -58,9 +81,9 @@ class View(object):
 
     def operations_for_operation(self, op):
         if isinstance(op, operation.PutOperation):
-            return self.add(op.entity)
+            return [], self.add(op.entity)
         elif isinstance(op, operation.DeleteOperation):
-            return [GetAndRemoveOperation(op.table, op.key, self)]
+            return [GetAndRemoveOperation(op.table, op.key, self)], []
         elif isinstance(op, operation.UpdateOperation):
             log.warning("View %s doesn't know how to handle an update", self)
         else:
