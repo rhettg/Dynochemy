@@ -138,6 +138,7 @@ class OperationSet(Operation):
         result = OperationResult(db)
         df = OperationResultDefer(result, db.ioloop)
 
+        batch_read_defer = None
         batch_write_defer = None
         update_defers = []
 
@@ -148,7 +149,9 @@ class OperationSet(Operation):
 
             result.update(r)
 
-            if batch_write_defer and batch_write_defer.done and all(df.done for df in update_defers):
+            if (batch_write_defer and batch_write_defer.done) \
+               and (batch_read_defer and batch_read_defer.done) \
+               and all(df.done for df in update_defers):
                 # This guy takes a defer itself, we'll just use the last one, but it shouldn't really matter
                 # Error handling is weird at this level.
                 df.callback(cb)
@@ -158,11 +161,14 @@ class OperationSet(Operation):
             update_defers.append(op_defer)
             op_defer.add_callback(record_result)
 
-        # note: we're doing this last because in sync mode, stuff is always
-        # done and we don't want to trigger the callback till we have created
-        # all the defers.
+        # Note: we're doing this last because in sync mode, stuff is always
+        # done immediately and we don't want to trigger the callback till we
+        # have created all the defers.
         batch_write_defer = self.batch_write_op.run_defer(db)
         batch_write_defer.add_callback(record_result)
+
+        batch_read_defer = self.batch_read_op.run_defer(db)
+        batch_read_defer.add_callback(record_result)
 
         return df
 

@@ -285,3 +285,34 @@ class MultiBatchReadTestCase(OperationTestCase):
             assert_equal(val['key'], key)
 
         assert_equal(results.read_capacity[self.db.TestTable.name], 4.0)
+
+
+class MutliReadWriteUpdateTestCase(OperationTestCase):
+    """Combining all 3 types (read, write and update) is special because they
+    coorespond to batch read, batch write and updates which is what an
+    OperationSet can contain.
+    """
+    @setup
+    def build_entities(self):
+        self.keys = []
+        for ndx in range(4):
+            key = 'entity_%d' % ndx
+            self.keys.append(key)
+            entity = {'key': key, 'value': ndx}
+            self.db.TestTable.put(entity)
+
+    def test(self):
+        ops = [operation.GetOperation(TestTable, key) for key in self.keys]
+        ops.append(operation.UpdateOperation(TestTable, 'entity_1', add={'value': 1}))
+        ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLAH', 'value': 42}))
+        ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLARGH', 'value': 44}))
+
+        full_op = reduce(operation.reduce_operations, ops)
+        results = full_op.run(self.db)
+
+        for op in ops[:4]:
+            assert results[op]
+
+        #for res in self.db.TestTable.scan()():
+            #pprint.pprint(res)
+
