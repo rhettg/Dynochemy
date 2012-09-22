@@ -27,3 +27,4 @@ from .view import View
 from .solvent import Solvent
 from .sql import SQLDB
 from .errors import *
+from .operation import *

@@ -44,6 +44,9 @@ class Solvent(object):
     def add_operation(self, op):
         self.op_seq[0].add(op)
 
+    def __len__(self):
+        return sum(len(op_set) for op_set in self.op_seq)
+
     def put(self, table, entity):
         table_cls = classify(table)
         op = operation.PutOperation(table_cls, entity)
@@ -68,8 +71,11 @@ class Solvent(object):
         self.add_operation(op)
         return op
 
-    def query(self, table):
-        raise NotImplementedError
+    def query(self, table, key):
+        table_cls = classify(table)
+        op = operation.QueryOperation(table_cls, key)
+        self.add_operation(op)
+        return op
 
     def scan(self, table):
         raise NotImplementedError
@@ -115,9 +121,6 @@ class Solvent(object):
 
         # How many attempts (usually due to a failure)
         attempts = [0]
-
-        # How many actual iterations have we gone through
-        steps = [0]
 
         def handle_result(cb):
             remaining_ops = operation.OperationSet()

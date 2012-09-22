@@ -14,12 +14,19 @@ class TestTable(Table):
     hash_key = 'key'
 
 
+class FullTestTable(Table):
+    name = "full_test"
+    hash_key = 'key'
+    range_key = 'range_key'
+
+
 class SolventTestCase(TestCase):
     @setup
     def build_db(self):
         engine = sqlalchemy.create_engine("sqlite://")
         self.db = sql.SQLDB(engine)
         self.db.register(TestTable)
+        self.db.register(FullTestTable)
 
 
 class SimpleSolventTestCase(SolventTestCase):
@@ -151,4 +158,39 @@ class SolventViewTestCase(SolventTestCase):
 
         assert_equal(self.db.ViewTable['green']['count'], 0)
         assert_equal(self.db.ViewTable['blue']['count'], 1)
+
+
+class SolventQueryTestCase(SolventTestCase):
+    @setup
+    def build_entities(self):
+        self.keys = []
+        for ndx in range(4):
+            entity = {'key': 'my_key', 'range_key': ndx}
+            self.db.FullTestTable.put(entity)
+
+    @setup
+    def change_query_limit(self):
+        self._old_limit = sql.DEFAULT_LIMIT
+        sql.DEFAULT_LIMIT = 2
+
+    @teardown
+    def restore_query_limit(self):
+        sql.DEFAULT_LIMIT = self._old_limit
+
+    def test(self):
+        s = Solvent()
+        q_op = s.query(FullTestTable, 'my_key')
+
+        q_op.range(0, 2)
+        q_op.limit(20)
+
+        result = s.run(self.db)
+
+        query_result, err = result[q_op]
+        if err:
+            raise err
+
+        entities = list(query_result)
+        assert_equal(len(entities), 3)
+
 

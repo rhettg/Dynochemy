@@ -840,6 +840,22 @@ class QueryResults(Results):
         self.query = query
         self.result_data = result_data
 
+    def combine(self, other_results):
+        return CombinedQueryResults(self, other_results)
+
+
+class CombinedQueryResults(QueryResults):
+    """Special version of QueryResults that puts multiple sets of QueryResults together.
+
+    This is usually constructed by using the combine() method on a QueryResult.
+    """
+    def __init__(self, query_results, other_query_results):
+        self.query = query_results.query
+        self.result_data = {}
+
+        self.result_data['Items'] = query_results.result_data['Items'] + other_query_results.result_data['Items']
+        self.result_data['Count'] = query_results.result_data['Count'] + other_query_results.result_data['Count']
+
 
 class ScanResults(Results):
     def __init__(self, scan, result_data):

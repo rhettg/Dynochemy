@@ -13,6 +13,11 @@ class TestTable(Table):
     name = "test"
     hash_key = 'key'
 
+class FullTestTable(Table):
+    name = "full_test"
+    hash_key = 'key'
+    range_key = 'range_key'
+
 class TestDB(db.BaseDB):
     def __init__(self):
         super(TestDB, self).__init__()
@@ -27,6 +32,7 @@ class OperationTestCase(TestCase):
         engine = sqlalchemy.create_engine("sqlite://")
         self.db = sql.SQLDB(engine)
         self.db.register(TestTable)
+        self.db.register(FullTestTable)
 
 
 class SimplePutTestCase(OperationTestCase):
@@ -294,4 +300,38 @@ class MutliReadWriteUpdateTestCase(OperationTestCase):
 
         #for res in self.db.TestTable.scan()():
             #pprint.pprint(res)
+
+class QueryOperationTestCase(OperationTestCase):
+    @setup
+    def build_entities(self):
+        self.keys = []
+        for ndx in range(4):
+            entity = {'key': 'my_key', 'range_key': ndx}
+            self.db.FullTestTable.put(entity)
+
+    @setup
+    def change_query_limit(self):
+        self._old_limit = sql.DEFAULT_LIMIT
+        sql.DEFAULT_LIMIT = 2
+
+    @teardown
+    def restore_query_limit(self):
+        sql.DEFAULT_LIMIT = self._old_limit
+
+    def test(self):
+        op = operation.QueryOperation(FullTestTable, 'my_key')
+
+        op.range(0, 2)
+        op.limit(20)
+
+        result = op.run(self.db)
+        assert_equal(len(result.next_ops), 1)
+
+        query_result, err = result[op]
+        if err:
+            raise err
+
+        # We should only have 2, because that's our DEFAULT_LIMIT
+        entities = list(query_result)
+        assert_equal(len(entities), 2)
 

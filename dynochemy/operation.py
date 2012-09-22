@@ -24,6 +24,7 @@ operation.
 """
 import functools
 import itertools
+import copy
 
 from . import errors
 from . import defer
@@ -84,6 +85,7 @@ class OperationSet(Operation):
     def __init__(self, operation_list=None):
         # Really we can combine everything into into two operations
         self.update_ops = []
+        self.other_ops = []
         self.batch_write_op = BatchWriteOperation()
         self.batch_read_op = BatchReadOperation()
 
@@ -92,13 +94,13 @@ class OperationSet(Operation):
                 self.add(op)
 
     def __len__(self):
-        return len(self.update_ops) + len(self.batch_write_op) + len(self.batch_read_op)
+        return len(self.update_ops) + len(self.other_ops) + len(self.batch_write_op) + len(self.batch_read_op)
 
     def __copy__(self):
         return OperationSet(list(self))
 
     def __iter__(self):
-        for op in itertools.chain(self.update_ops, self.batch_write_op, self.batch_read_op):
+        for op in itertools.chain(self.update_ops, self.other_ops, self.batch_write_op, self.batch_read_op):
             yield op
 
     def add(self, op):
@@ -108,6 +110,8 @@ class OperationSet(Operation):
             self.batch_read_op.add(op)
         elif isinstance(op, UpdateOperation):
             self.add_update(op)
+        elif isinstance(op, QueryOperation):
+            self.other_ops.append(op)
         else:
             raise ValueError("Don't know how to add op %r" % op)
 
@@ -141,7 +145,7 @@ class OperationSet(Operation):
 
         batch_read_defer = None
         batch_write_defer = None
-        update_defers = []
+        individual_defers = []
 
         # This result handler is going to track all our results. When they are done, we complete the master defer object
         # and report the results
@@ -152,14 +156,14 @@ class OperationSet(Operation):
 
             if (batch_write_defer and batch_write_defer.done) \
                and (batch_read_defer and batch_read_defer.done) \
-               and all(df.done for df in update_defers):
+               and all(df.done for df in individual_defers):
                 # This guy takes a defer itself, we'll just use the last one, but it shouldn't really matter
                 # Error handling is weird at this level.
                 df.callback(cb)
 
-        for op in self.update_ops:
+        for op in itertools.chain(self.update_ops, self.other_ops):
             op_defer = op.run_defer(db)
-            update_defers.append(op_defer)
+            individual_defers.append(op_defer)
             op_defer.add_callback(record_result)
 
         # Note: we're doing this last because in sync mode, stuff is always
@@ -455,6 +459,111 @@ class GetOperation(Operation, _ReadBatchableMixin):
         return ('GET', self.table.name, self.key)
 
 
+class QueryOperation(Operation):
+    """Combined query operation that runs multiple sub-queries until retieving all the requested results."""
+    def __init__(self, table, key, args=None):
+        self.table = table
+        self.hash_key = key
+        self.args = args or {}
+
+    def __copy__(self):
+        op = QueryOperation(self.table, self.hash_key, args=copy.copy(self.args))
+        return op
+
+    def range(self, start=None, end=None):
+        self.args['range'] = (start, end)
+        return self
+
+    def reverse(self, reverse=True):
+        self.args['reverse'] = reverse
+
+    def limit(self, limit):
+        self.args['limit'] = limit
+
+    @property
+    def unique_key(self):
+        # Assumes updates for the same key have been combined together
+        return ('QUERY', self.table.name, self.hash_key, tuple(self.args.items()))
+
+    def run_defer(self, db):
+        result = QueryOperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        segment_op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
+
+        def record_result(cb):
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
+
+            op_result, err = cb.result
+            segment_op, (query_result, err) = list(op_result.iteritems())[0]
+            if err or not query_result.has_next:
+                df.callback(cb)
+            else:
+                last_key = utils.parse_key(query_result.result_data['LastEvaluatedKey'])
+                next_op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
+                next_op.last_seen(last_key[1])
+                next_op_df = next_op.run_defer(db)
+                next_op_df.add_callback(record_result)
+
+        op_df = segment_op.run_defer(db)
+        op_df.add_callback(record_result)
+        return df
+
+
+class QuerySegmentOperation(Operation):
+    def __init__(self, table, key, args=None):
+        self.table = table
+        self.hash_key = key
+        self.args = args or {}
+
+    def __copy__(self):
+        op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
+        return op
+
+    def range(self, start=None, end=None):
+        self.args['range'] = (start, end)
+        return self
+
+    def reverse(self, reverse=True):
+        self.args['reverse'] = reverse
+
+    def limit(self, limit):
+        self.args['limit'] = limit
+
+    def last_seen(self, range_id):
+        self.args['last_seen'] = range_id
+
+    @property
+    def unique_key(self):
+        # Assumes updates for the same key have been combined together
+        return ('QUERY_SEGMENT', self.table.name, self.hash_key, tuple(self.args.items()))
+
+    def run_defer(self, db):
+        result = OperationResult(db)
+        df = OperationResultDefer(result, db.ioloop)
+
+        def record_result(cb):
+            result.record_result(self, 
+                                 cb.result, 
+                                 read_capacity=cb.kwargs.get('read_capacity'), 
+                                 write_capacity=cb.kwargs.get('write_capacity'))
+            df.callback(cb)
+
+        query = getattr(db, self.table.__name__).query(self.hash_key)
+        for param, arg in self.args.iteritems():
+            if param == 'range':
+                query = query.range(*arg)
+            else:
+                query = getattr(query, param)(arg)
+
+        op_df = query.defer()
+        op_df.add_callback(record_result)
+        return df
+
+
 class OperationResultDefer(defer.Defer):
     """Special defer that returns a OperationResult, error tuple
     """
@@ -537,3 +646,27 @@ class OperationResult(object):
     def __repr__(self):
         return repr(self.results)
 
+
+class QueryOperationResult(OperationResult):
+    """Special version of OperationResult which understands that we'll want a
+    combined query result for QueryOperation (made up of possibly sereral
+    QuerySegmentOperations)
+    """
+    def record_result(self, op, result, read_capacity=None, write_capacity=None):
+        if op in self.results:
+            new_result, _ = result
+            old_result, _ = self.results[op]
+
+            new_query_result, err = new_result.results.values()[0]
+            assert not err
+
+            old_query_result, err = old_result.results.values()[0]
+            assert not err
+
+            combined_results = old_query_result.combine(new_query_result)
+            return super(QueryOperationResult, self).record_result(op, (combined_results, None), read_capacity, write_capacity)
+        else:
+            return super(QueryOperationResult, self).record_result(op, result, read_capacity, write_capacity)
+
+
+__all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "OperationSet"]

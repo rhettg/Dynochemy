@@ -63,6 +63,14 @@ def format_key(key_spec, key_value):
             out_key[key] = format_value(value)
         return out_key
 
+def parse_key(key):
+    parsed_value = parse_item(key)
+
+    if 'RangeKeyElement' in parsed_value:
+        return (parsed_value['HashKeyElement'], parsed_value['RangeKeyElement'])
+    else:
+        return (parsed_value['HashKeyElement'],)
+
 EMPTY_VALUES = ['', None, [], set(), tuple()]
 def format_item(item):
     return dict((k, format_value(v)) for k, v in item.iteritems() if v not in EMPTY_VALUES)

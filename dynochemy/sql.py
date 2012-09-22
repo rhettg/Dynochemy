@@ -384,11 +384,9 @@ class SQLClient(object):
 
         q = sql.select([sql_table], expr)
 
-        default_limit = False
         if 'Limit' in args:
             q = q.limit(args['Limit'])
         else:
-            default_limit = True
             q = q.limit(DEFAULT_LIMIT + 1)
 
         if len(key_spec) > 1:
@@ -409,9 +407,11 @@ class SQLClient(object):
                 out['Items'].append(out_item)
             else:
                 out['Items'].append(item_data)
+
             out['Count'] += 1
 
-            if default_limit and out['Count'] == DEFAULT_LIMIT:
+            # If we reach the limit our system allows us to return, we'll quit and inform the caller how to continue.
+            if out['Count'] == DEFAULT_LIMIT:
                 out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
                 break
 
