@@ -460,7 +460,14 @@ class GetOperation(Operation, _ReadBatchableMixin):
 
 
 class QueryOperation(Operation):
-    """Combined query operation that runs multiple sub-queries until retieving all the requested results."""
+    """Combined query operation that runs multiple sub-queries until retieving all the requested results.
+   
+    What this really means, is that doing multiple individual query requests is
+    handled directly by the Operation, rather than by a higher-level solvent,
+    which I would prefer. This issue is that the results of each
+    QuerySegmentOperation need to be combined together intelligently but there
+    isn't currently a real clean way for a solvent to sort that out for us.
+    """
     def __init__(self, table, key, args=None):
         self.table = table
         self.hash_key = key

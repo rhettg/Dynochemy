@@ -301,6 +301,7 @@ class MutliReadWriteUpdateTestCase(OperationTestCase):
         #for res in self.db.TestTable.scan()():
             #pprint.pprint(res)
 
+
 class QueryOperationTestCase(OperationTestCase):
     @setup
     def build_entities(self):
@@ -325,7 +326,6 @@ class QueryOperationTestCase(OperationTestCase):
         op.limit(20)
 
         result = op.run(self.db)
-        assert_equal(len(result.next_ops), 1)
 
         query_result, err = result[op]
         if err:
@@ -333,5 +333,5 @@ class QueryOperationTestCase(OperationTestCase):
 
         # We should only have 2, because that's our DEFAULT_LIMIT
         entities = list(query_result)
-        assert_equal(len(entities), 2)
+        assert_equal(len(entities), 3)
 
