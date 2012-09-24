@@ -50,27 +50,37 @@ class Operation(object):
     def __hash__(self):
         return hash(self.unique_key)
 
-    def run(self, db):
-        df = self.run_defer(db)
+    def run(self, db, op_result=None):
+        op_result = op_result or OperationResult()
+        df = self.run_defer(db, op_result)
         result, err = df()
         if err:
             raise err
         return result
 
-    def run_async(self, db, callback=None):
-        df = self.run_defer(db)
+    def run_async(self, db, op_result=None, callback=None):
+        op_result = op_result or OperationResult()
+        df = self.run_defer(db, op_result)
         def handle_result(cb):
             if callback is not None:
                 callback(*cb.result)
 
         df.add_callback(handle_result)
 
-    def result(self, result):
+    def have_result(self, op_result, op_cb):
         """Called when a result for this operation is available.
 
-        May return another operation that should be executed next. This is useful for operations that must happen in a sequence.
+        Args -
+          op_result: OperationResult object we have been storing results into for this operation.
+          value: The value from the operation
+          err: The error (may be None)
+
+        This gives an operation the chance to intercept the processing of results, and potentially queue 'next operations'.
         """
-        return None
+        op_result.record_result(self, 
+                             cb.result, 
+                             read_capacity=cb.kwargs.get('read_capacity'), 
+                             write_capacity=cb.kwargs.get('write_capacity'))
 
 
 class OperationSet(Operation):
@@ -136,12 +146,10 @@ class OperationSet(Operation):
         self.update_ops = new_update_ops
         return
 
-    def run_defer(self, db):
+    def run_defer(self, db, op_result):
         # This one is a little more complicated. We have to run all
         # sub-operations and then combine the OperationResult objects
-
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
+        df = OperationResultDefer(op_result, db.ioloop)
 
         batch_read_defer = None
         batch_write_defer = None
@@ -149,11 +157,7 @@ class OperationSet(Operation):
 
         # This result handler is going to track all our results. When they are done, we complete the master defer object
         # and report the results
-        def record_result(cb):
-            r, err = cb.result
-
-            result.update(r)
-
+        def handle_result(cb):
             if (batch_write_defer and batch_write_defer.done) \
                and (batch_read_defer and batch_read_defer.done) \
                and all(df.done for df in individual_defers):
@@ -162,17 +166,17 @@ class OperationSet(Operation):
                 df.callback(cb)
 
         for op in itertools.chain(self.update_ops, self.other_ops):
-            op_defer = op.run_defer(db)
+            op_defer = op.run_defer(db, op_result)
             individual_defers.append(op_defer)
-            op_defer.add_callback(record_result)
+            op_defer.add_callback(handle_result)
 
         # Note: we're doing this last because in sync mode, stuff is always
         # done immediately and we don't want to trigger the callback till we
         # have created all the defers.
-        batch_write_defer = self.batch_write_op.run_defer(db)
+        batch_write_defer = self.batch_write_op.run_defer(db, op_result)
         batch_write_defer.add_callback(record_result)
 
-        batch_read_defer = self.batch_read_op.run_defer(db)
+        batch_read_defer = self.batch_read_op.run_defer(db, op_result)
         batch_read_defer.add_callback(record_result)
 
         return df
@@ -231,15 +235,12 @@ class UpdateOperation(Operation):
 
         return new_update
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
+    def run_defer(self, db, op_result):
+        df = OperationResultDefer(op_result, db.ioloop)
 
         def record_result(cb):
-            result.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
+            value, err = cb.result
+            self.have_result(op_result, cb)
             df.callback(cb)
 
         update_df = getattr(db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
@@ -264,11 +265,32 @@ class _ReadBatchableMixin(object):
         raise NotImplementedError
 
 
-class BatchWriteOperation(Operation):
+class BatchOperation(Operation):
     __slots__ = ["ops"]
     def __init__(self):
         self.ops = set()
 
+    def __len__(self):
+        return len(self.ops)
+
+    def __iter__(self):
+        for op in self.ops:
+            yield op
+
+    def have_result(self, op_result, op_cb, op=None):
+        # This method will be called for each sub-op, and also for the overall
+        # operation (where we can rely on base-class functionality)
+        if op is None:
+            super(BatchOperation, self).have_result(op_result, op_cb)
+        else:
+            assert op in self.ops
+
+            # Note that we are not passing read/write capacity stuff along here
+            # because we don't want to double count
+            op_result.record_result(op, cb.result)
+
+
+class BatchWriteOperation(BatchOperation):
     def add(self, op):
         if not isinstance(op, _WriteBatchableMixin):
             raise ValueError(op)
@@ -278,27 +300,20 @@ class BatchWriteOperation(Operation):
         else:
             self.ops.add(op)
 
-    def __len__(self):
-        return len(self.ops)
-
-    def __iter__(self):
-        for op in self.ops:
-            yield op
-
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
+    def run_defer(self, db, op_result):
+        df = OperationResultDefer(op_result, db.ioloop)
         if not self.ops:
             df.done = True
             return df
 
         def record_result(op, cb):
-            result.record_result(op, cb.result)
+            self.have_result(op_result, cb, op=op)
 
         all_batch_defers = []
         def handle_batch_result(cb):
             result.update_write_capacity(cb.kwargs.get('write_capacity', {}))
             if all(df.done for df in all_batch_defers) and not df.done:
+                self.have_result(op_result, cb)
                 df.callback(cb)
 
         for op_set in utils.segment(self.ops, constants.MAX_BATCH_WRITE_ITEMS):
@@ -316,18 +331,7 @@ class BatchWriteOperation(Operation):
         return df
 
 
-class BatchReadOperation(Operation):
-    __slots__ = ["ops"]
-    def __init__(self):
-        self.ops = set()
-
-    def __len__(self):
-        return len(self.ops)
-
-    def __iter__(self):
-        for op in self.ops:
-            yield op
-
+class BatchReadOperation(BatchOperation):
     def add(self, op):
         if not isinstance(op, _ReadBatchableMixin):
             raise ValueError(op)
@@ -336,29 +340,33 @@ class BatchReadOperation(Operation):
         else:
             self.ops.add(op)
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
+    def run_defer(self, db, op_result):
+        df = OperationResultDefer(op_result, db.ioloop)
 
         if not self.ops:
             df.done = True
             return df
-
-        def record_result(op, cb):
-            result.record_result(op, cb.result)
 
         all_batch_defers = []
         def handle_batch_result(cb):
             result.update_read_capacity(cb.kwargs.get('read_capacity'))
 
             if all(df.done for df in all_batch_defers) and not df.done:
+                self.have_result(op_result, cb)
                 df.callback(cb)
+
+        def handle_op_result(op, cb):
+            self.have_result(op_result, cb, op=op)
 
         for op_set in utils.segment(self.ops, constants.MAX_BATCH_READ_ITEMS):
             batch = db.batch_read()
             for op in op_set:
                 op_df = op.add_to_batch(batch)
-                op_df.add_callback(functools.partial(record_result, op))
+
+                # To collect our results per sub-operation, we'll need to add a
+                # hook to record our specific part of the response for each
+                # sub-op
+                op_df.add_callback(functools.partial(handle_op_result, op))
 
             batch_df = batch.defer()
             all_batch_defers.append(batch_df)
@@ -464,9 +472,15 @@ class QueryOperation(Operation):
    
     What this really means, is that doing multiple individual query requests is
     handled directly by the Operation, rather than by a higher-level solvent,
-    which I would prefer. This issue is that the results of each
+    which I would prefer. 
+    
+    This issue is that the results of each
     QuerySegmentOperation need to be combined together intelligently but there
     isn't currently a real clean way for a solvent to sort that out for us.
+
+    This big problem is (besides how complex it is) how we handle errors and
+    retries. We could leave provisioning error issues to our 
+    solvent, but that means we'll re-run the entire query operation, not just a segment.
     """
     def __init__(self, table, key, args=None):
         self.table = table
