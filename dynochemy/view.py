@@ -45,7 +45,7 @@ def view_operations(db, op_sequence):
                 new_op_seq.insert(-1, [])
 
             for new_op in seq_prev_ops:
-                new_op_seq[-2].append(new_op)
+                new_op_seq[0].append(new_op)
 
     return new_op_seq
 
@@ -60,12 +60,12 @@ class GetAndRemoveOperation(operation.GetOperation):
         super(GetAndRemoveOperation, self).__init__(table, key)
         self.view = view
 
-    def result(self, result):
-        entity, err = result
-        if err:
-            return None
+    def have_result(self, op_results, op_cb):
+        super(GetAndRemoveOperation, self).have_result(op_results, op_cb)
 
-        return self.view.remove(entity)
+        entity, err = op_results[self]
+        if not err:
+            op_results.next_ops += self.view.remove(entity)
 
 
 class View(object):

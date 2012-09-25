@@ -103,9 +103,11 @@ class SolventSequenceTestCase(SolventTestCase):
     @setup
     def build_by_two_op(self):
         class ByTwoOperation(operation.UpdateOperation):
-            def result(self, r):
+            def have_result(self, op_results, op_cb):
+                super(ByTwoOperation, self).have_result(op_results, op_cb)
+
                 # return an equivalent update operation
-                return [operation.UpdateOperation(self.table, self.key, add=self.add)]
+                op_results.next_ops.append(operation.UpdateOperation(self.table, self.key, add=self.add))
 
         self.op = ByTwoOperation(self.db.TestTable.__class__, 'rhettg', add={'value': 1})
 

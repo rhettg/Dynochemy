@@ -95,7 +95,7 @@ class Solvent(object):
         df.add_callback(handle_result)
 
     def run_defer(self, db):
-        run = SolventRun(db, self.ops)
+        run = SolventRun(db, self.operations)
         return run.run_defer()
 
 
@@ -105,7 +105,7 @@ class SolventRun(object):
 
         self.op_seq = view.view_operations(db, [ops])
 
-        self.op_results = operation.OperationResults()
+        self.op_results = operation.OperationResult(db)
         self.defer = operation.OperationResultDefer(self.op_results, db.ioloop)
 
         self.current_op_dfs = []
@@ -121,9 +121,6 @@ class SolventRun(object):
         return self.defer
 
     def next_step(self):
-        if not self.op_seq:
-            self.defer.callback(None)
-
         next_ops = []
         # Start our set of operations off with whatever our results object says we have to do.
         # These are usually complex operations with multiple stages.
@@ -131,10 +128,15 @@ class SolventRun(object):
             next_ops.append(self.op_results.next_ops.pop(0))
 
         # Next, grab whatever is in our known operation sequence.
-        next_ops += self.op_seq.pop(0)
+        if self.op_seq:
+            next_ops += self.op_seq.pop(0)
+
+        if not next_ops:
+            self.defer.callback(None)
+            return
 
         for op in OperationSet(next_ops).ops:
-            op_df = op.run_defer(results)
+            op_df = op.run_defer(self.op_results)
             self.current_op_dfs.append(op_df)
 
         # We add our callbacks all at once, because in sync mode, we want to
@@ -155,10 +157,10 @@ class SolventRun(object):
 
             has_failed_ops = self.requeue_failed_ops()
             if has_failed_ops:
-                delay_secs = 0.8 * results.error_attempts
+                delay_secs = 0.8 * self.op_results.error_attempts
                 log.debug("Trying again in %.1f seconds", delay_secs)
 
-                db = results_df.op_result.db
+                db = self.op_results.db
                 if db.ioloop:
                     db.ioloop.add_timeout(time.time() + delay_secs, self.next_step)
                 else:
@@ -173,6 +175,9 @@ class SolventRun(object):
 
         # We'll only requeue failed operations a fixed number of times.
         if self.op_results.error_attempts < MAX_ATTEMPTS:
+
+            self.op_results.error_attempts += 1
+
             # Check for errors and do some retries.
             for op in self.op_results:
                 _, err = self.op_results[op]

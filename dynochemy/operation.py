@@ -66,17 +66,20 @@ class Operation(object):
 
         df.add_callback(handle_result)
 
-    def have_result(self, op_results, op_cb):
+    def have_result(self, op_results, op_cb, ignore_capacity=False):
         """Called when a result for this operation is available.
 
         Args -
           op_result: OperationResult object we have been storing results into for this operation.
-          value: The value from the operation
-          err: The error (may be None)
+          op_cb: The defer making the callback
+          ignore_capacity: Set to true if this result should not record capacity. This would be the case if this operation wasn't run individually.
 
         This gives an operation the chance to intercept the processing of results, and potentially queue 'next operations'.
         """
-        op_results.record_result(self, 
+        if ignore_capacity:
+            op_results.record_result(self, op_cb.result)
+        else:
+            op_results.record_result(self, 
                              op_cb.result, 
                              read_capacity=op_cb.kwargs.get('read_capacity'), 
                              write_capacity=op_cb.kwargs.get('write_capacity'))
@@ -182,18 +185,6 @@ class BatchOperation(Operation):
         for op in self.ops:
             yield op
 
-    def have_result(self, op_results, op_cb, op=None):
-        # This method will be called for each sub-op, and also for the overall
-        # operation (where we can rely on base-class functionality)
-        if op is None:
-            super(BatchOperation, self).have_result(op_results, op_cb)
-        else:
-            assert op in self.ops
-
-            # Note that we are not passing read/write capacity stuff along here
-            # because we don't want to double count
-            op_results.record_result(op, op_cb.result)
-
 
 class BatchWriteOperation(BatchOperation):
     def add(self, op):
@@ -212,7 +203,7 @@ class BatchWriteOperation(BatchOperation):
             return df
 
         def record_result(op, cb):
-            self.have_result(op_results, cb, op=op)
+            op.have_result(op_results, cb, ignore_capacity=True)
 
         def handle_batch_result(cb):
             op_results.update_write_capacity(cb.kwargs.get('write_capacity', {}))
@@ -259,7 +250,7 @@ class BatchReadOperation(BatchOperation):
             return df
 
         def handle_op_result(op, cb):
-            self.have_result(op_results, cb, op=op)
+            op.have_result(op_results, cb)
 
         def handle_batch_result(cb):
             op_results.update_read_capacity(cb.kwargs.get('read_capacity', {}))
@@ -297,14 +288,8 @@ class PutOperation(Operation, _WriteBatchableMixin):
         self.entity = entity
 
     def run_defer(self, op_results):
-        def record_result(cb):
-            op_results.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
-
         op_df = getattr(op_results.db, self.table.__name__).put_defer(self.entity)
-        op_df.add_callback(record_result)
+        op_df.add_callback(functools.partial(self.have_result, op_results))
 
         return op_df
 
@@ -323,14 +308,8 @@ class DeleteOperation(Operation, _WriteBatchableMixin):
         self.key = key
 
     def run_defer(self, op_results):
-        def record_result(cb):
-            op_results.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
-
         op_df = getattr(op_results.db, self.table.__name__).delete_defer(self.key)
-        op_df.add_callback(record_result)
+        op_df.add_callback(functools.partial(self.have_result, op_results))
 
         return op_df
 
@@ -349,14 +328,8 @@ class GetOperation(Operation, _ReadBatchableMixin):
         self.key = key
 
     def run_defer(self, op_results):
-        def record_result(cb):
-            op_results.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
-
         op_df = getattr(op_results.db, self.table.__name__).get_defer(self.key)
-        op_df.add_callback(record_result)
+        op_df.add_callback(functools.partial(self.have_result, op_results))
 
         return op_df
 
@@ -554,6 +527,9 @@ class OperationResult(object):
 
     def iteritems(self):
         return self.results.iteritems()
+
+    def __iter__(self):
+        return iter(self.results)
 
     def __getitem__(self, key):
         return self.results[key]
