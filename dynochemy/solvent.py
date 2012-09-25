@@ -134,19 +134,13 @@ class SolventRun(object):
         next_ops += self.op_seq.pop(0)
 
         for op in OperationSet(next_ops).ops:
-            op_df = op.run_defer(results.db)
+            op_df = op.run_defer(results)
             self.current_op_dfs.append(op_df)
 
         # We add our callbacks all at once, because in sync mode, we want to
         # ensure all our op_dfs have been created before we start to look for
         # finished ones.
         for op_df in self.current_op_dfs:
-            # We give each op an opportunity to store it's own results.
-            def handle_op_result(cb):
-                op.have_result(results, cb)
-
-            op_df.add_callback(functools.partial(op.have_result, results))
-
             # After each op, we also need to check for completion of all our
             # ops (based on the all_op_dfs list itself)
             op_df.add_callback(self.check_step_done)
@@ -173,7 +167,6 @@ class SolventRun(object):
                     self.next_step()
             else:
                 self.next_step()
-
 
     def requeue_failed_ops(self):
         has_failures = False

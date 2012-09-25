@@ -18,6 +18,8 @@ class Defer(object):
         self.done = False
         self.ioloop = ioloop
         self.do_stop = False
+        self.args = None
+        self.kwargs = None
         self._timeout_req = None
         self._callbacks = []
 

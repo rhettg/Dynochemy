@@ -40,9 +40,11 @@ class SimplePutTestCase(OperationTestCase):
     def build_operation(self):
         self.entity = {'key': 'hello', 'count': 0}
         self.op = operation.PutOperation(TestTable, self.entity)
+        self.results = operation.OperationResult(self.db)
 
     def test(self):
-        self.op.run(self.db)
+        self.op.run(self.results)
+        assert self.results[self.op]
 
         entity = self.db.TestTable.get("hello")
         assert entity
@@ -58,9 +60,12 @@ class SimpleDeleteTestCase(OperationTestCase):
     @setup
     def build_operation(self):
         self.op = operation.DeleteOperation(TestTable, 'hello')
+        self.results = operation.OperationResult(self.db)
 
     def test(self):
-        self.op.run(self.db)
+        self.op.run(self.results)
+
+        assert self.results[self.op]
 
         try:
             entity = self.db.TestTable.get("hello")
@@ -82,12 +87,18 @@ class BatchWriteTestCase(OperationTestCase):
     def build_operation(self):
         put_op = operation.PutOperation(TestTable, self.new_entity)
         delete_op = operation.DeleteOperation(TestTable, 'hello')
+        self.results = operation.OperationResult(self.db)
+
+        self.sub_ops = [put_op, delete_op]
         self.batch_op = operation.BatchWriteOperation()
-        self.batch_op.add(put_op)
-        self.batch_op.add(delete_op)
+        for op in self.sub_ops:
+            self.batch_op.add(op)
 
     def test(self):
-        results = self.batch_op.run(self.db)
+        results = self.batch_op.run(self.results)
+
+        for op in self.sub_ops:
+            assert self.results[op]
 
         try:
             entity = self.db.TestTable.get("hello")
@@ -100,7 +111,7 @@ class BatchWriteTestCase(OperationTestCase):
         assert entity
         assert_equal(entity['count'], 1)
 
-        assert_equal(results.write_capacity[self.db.TestTable.name], 2.0)
+        assert_equal(self.results.write_capacity[self.db.TestTable.name], 2.0)
 
 
 class UpdateTestCase(OperationTestCase):
@@ -112,62 +123,33 @@ class UpdateTestCase(OperationTestCase):
     @setup
     def build_operation(self):
         self.op = operation.UpdateOperation(TestTable, self.entity['key'], add={'count': 1})
+        self.results = operation.OperationResult(self.db)
 
     def test(self):
-        result = self.op.run(self.db)
+        result = self.op.run(self.results)
 
         entity = self.db.TestTable.get("hello")
         assert_equal(entity['count'], 2)
-        assert_equal(result[self.op][0]['count'], 2)
-
-
-class OperationSetSimpleTestCase(OperationTestCase):
-    def test(self):
-        op_set = operation.OperationSet()
-        op_1 = operation.PutOperation(TestTable, {'key': 'hello', 'count': 0})
-        op_set.add(op_1)
-
-        op_2 = operation.PutOperation(TestTable, {'key': 'world', 'count': 1})
-        op_set.add(op_2)
-
-        op_3 = operation.PutOperation(TestTable, {'key': 'you', 'count': 2})
-        op_set.add(op_3)
-
-        result = op_set.run(self.db)
-
-        entity_1 = self.db.TestTable.get('hello')
-        assert_equal(entity_1['count'], 0)
-
-        entity_2 = self.db.TestTable.get('world')
-        assert_equal(entity_2['count'], 1)
-
-        entity_3 = self.db.TestTable.get('you')
-        assert_equal(entity_3['count'], 2)
-
-        # Now check our result object
-        val, err = result[op_1]
-        assert not err
-
-        val, err = result[op_2]
-        assert not err
-
-        val, err = result[op_3]
-        assert not err
+        assert_equal(self.results[self.op][0]['count'], 2)
 
 
 class CombineUpdateTestCase(OperationTestCase):
-    def test(self):
-        op_set = operation.OperationSet()
-        op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
-        [op_set.add(op) for _ in range(3)]
+    @setup
+    def build_op(self):
+        self.op = operation.UpdateOperation(TestTable, 'hello', put={'my_name': 'slim shady'}, add={'count': 1})
+        self.results = operation.OperationResult(self.db)
 
-        result = op_set.run(self.db)
+    def test(self):
+        op = self.op.combine_updates(self.op)
+        op = op.combine_updates(self.op)
+
+        result = op.run(self.results)
 
         entity = self.db.TestTable.get('hello')
         assert_equal(entity['my_name'], 'slim shady')
         assert_equal(entity['count'], 3)
 
-        val, err = result[op]
+        val, err = self.results[op]
         assert not err
 
 
@@ -200,11 +182,12 @@ class GetTestCase(OperationTestCase):
     @setup
     def build_operation(self):
         self.op = operation.GetOperation(TestTable, self.entity['key'])
+        self.result = operation.OperationResult(self.db)
 
     def test(self):
-        result = self.op.run(self.db)
+        self.op.run(self.result)
 
-        entity, err = result[self.op]
+        entity, err = self.result[self.op]
         assert not err
 
         assert_equal(entity['count'], 1)
@@ -219,22 +202,26 @@ class MultiGetTestCase(OperationTestCase):
         entity = {'key': 'world', 'count': 10}
         self.db.TestTable.put(entity)
 
+    @setup
+    def build_ops(self):
+        self.result = operation.OperationResult(self.db)
+        self.ops = [
+            operation.GetOperation(TestTable, "hello"),
+            operation.GetOperation(TestTable, "world"),
+        ]
+
+        self.batch_op = operation.BatchReadOperation(self.ops)
 
     def test(self):
-        op_set = operation.OperationSet()
-        op_1 = operation.GetOperation(TestTable, "hello")
-        op_set.add(op_1)
-        op_2 = operation.GetOperation(TestTable, "world")
-        op_set.add(op_2)
+        result = self.batch_op.run(self.result)
 
-        result = op_set.run(self.db)
-
-        entity, err = result[op_1]
+        op_1, op_2 = self.ops
+        entity, err = self.result[op_1]
         if err:
             raise err
         assert_equal(entity['count'], 1)
 
-        entity, err = result[op_2]
+        entity, err = self.result[op_2]
         assert not err
         assert_equal(entity['count'], 10)
 
@@ -258,48 +245,27 @@ class MultiBatchReadTestCase(OperationTestCase):
             entity = {'key': key, 'value': ndx}
             self.db.TestTable.put(entity)
 
-    def test(self):
-        op_set = operation.OperationSet()
-        ops = [operation.GetOperation(TestTable, key) for key in self.keys]
-        [op_set.add(op) for op in ops]
+    @setup
+    def build_ops(self):
+        self.result = operation.OperationResult(self.db)
+        self.ops = [operation.GetOperation(TestTable, key) for key in self.keys]
 
-        results = op_set.run(self.db)
-        for key, op in zip(self.keys, ops):
-            val, err = results[op]
+        self.batch_op = operation.BatchReadOperation(self.ops)
+
+    def test(self):
+        results = self.batch_op.run(self.result)
+
+        assert self.result.next_ops
+
+        next_batch = self.result.next_ops[0]
+        next_batch.run(self.result)
+
+        for key, op in zip(self.keys, self.ops):
+            val, err = self.result[op]
             assert not err
             assert_equal(val['key'], key)
 
-        assert_equal(results.read_capacity[self.db.TestTable.name], 4.0)
-
-
-class MutliReadWriteUpdateTestCase(OperationTestCase):
-    """Combining all 3 types (read, write and update) is special because they
-    coorespond to batch read, batch write and updates which is what an
-    OperationSet can contain.
-    """
-    @setup
-    def build_entities(self):
-        self.keys = []
-        for ndx in range(4):
-            key = 'entity_%d' % ndx
-            self.keys.append(key)
-            entity = {'key': key, 'value': ndx}
-            self.db.TestTable.put(entity)
-
-    def test(self):
-        ops = [operation.GetOperation(TestTable, key) for key in self.keys]
-        ops.append(operation.UpdateOperation(TestTable, 'entity_1', add={'value': 1}))
-        ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLAH', 'value': 42}))
-        ops.append(operation.PutOperation(TestTable, {'key': 'entity_BLARGH', 'value': 44}))
-
-        op_set = operation.OperationSet(ops)
-        results = op_set.run(self.db)
-
-        for op in ops[:4]:
-            assert results[op]
-
-        #for res in self.db.TestTable.scan()():
-            #pprint.pprint(res)
+        assert_equal(self.result.read_capacity[self.db.TestTable.name], 4.0)
 
 
 class QueryOperationTestCase(OperationTestCase):

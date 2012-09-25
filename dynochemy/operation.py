@@ -37,7 +37,7 @@ class Operation(object):
 
     """
 
-    def run_defer(self, db):
+    def run_defer(self, op_results):
         raise NotImplementedError
 
     @property
@@ -50,24 +50,23 @@ class Operation(object):
     def __hash__(self):
         return hash(self.unique_key)
 
-    def run(self, db, op_result=None):
-        op_result = op_result or OperationResult()
-        df = self.run_defer(db, op_result)
+    def run(self, op_results):
+        df = self.run_defer(op_results)
         result, err = df()
         if err:
             raise err
         return result
 
-    def run_async(self, db, op_result=None, callback=None):
-        op_result = op_result or OperationResult()
-        df = self.run_defer(db, op_result)
+    def run_async(self, op_results, callback=None):
+        df = self.run_defer(op_results)
+
         def handle_result(cb):
             if callback is not None:
                 callback(*cb.result)
 
         df.add_callback(handle_result)
 
-    def have_result(self, op_result, op_cb):
+    def have_result(self, op_results, op_cb):
         """Called when a result for this operation is available.
 
         Args -
@@ -77,10 +76,10 @@ class Operation(object):
 
         This gives an operation the chance to intercept the processing of results, and potentially queue 'next operations'.
         """
-        op_result.record_result(self, 
-                             cb.result, 
-                             read_capacity=cb.kwargs.get('read_capacity'), 
-                             write_capacity=cb.kwargs.get('write_capacity'))
+        op_results.record_result(self, 
+                             op_cb.result, 
+                             read_capacity=op_cb.kwargs.get('read_capacity'), 
+                             write_capacity=op_cb.kwargs.get('write_capacity'))
 
 
 def combine_dicts(left_dict, right_dict, combiner=None):
@@ -136,18 +135,11 @@ class UpdateOperation(Operation):
 
         return new_update
 
-    def run_defer(self, db, op_result):
-        df = OperationResultDefer(op_result, db.ioloop)
+    def run_defer(self, op_results):
+        update_df = getattr(op_results.db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
+        update_df.add_callback(functools.partial(self.have_result, op_results))
 
-        def record_result(cb):
-            value, err = cb.result
-            self.have_result(op_result, cb)
-            df.callback(cb)
-
-        update_df = getattr(db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
-        update_df.add_callback(record_result)
-
-        return df
+        return update_df
 
     @property
     def unique_key(self):
@@ -167,9 +159,21 @@ class _ReadBatchableMixin(object):
 
 
 class BatchOperation(Operation):
+    # BatchOperations have a slightly more complex design as they need to track sub-operations.
+    # We have a few requiremets:
+    #   1. Report results on an individual op basis (a defer for each sub-op)
+    #   2. Generate follow on batches for sub-ops that didn't get included due to being over capacity
+
     __slots__ = ["ops"]
-    def __init__(self):
+    def __init__(self, ops=None):
         self.ops = set()
+
+        if ops:
+            for op in ops:
+                self.add(op)
+
+    def add(self, op):
+        self.ops.add(op)
 
     def __len__(self):
         return len(self.ops)
@@ -178,17 +182,17 @@ class BatchOperation(Operation):
         for op in self.ops:
             yield op
 
-    def have_result(self, op_result, op_cb, op=None):
+    def have_result(self, op_results, op_cb, op=None):
         # This method will be called for each sub-op, and also for the overall
         # operation (where we can rely on base-class functionality)
         if op is None:
-            super(BatchOperation, self).have_result(op_result, op_cb)
+            super(BatchOperation, self).have_result(op_results, op_cb)
         else:
             assert op in self.ops
 
             # Note that we are not passing read/write capacity stuff along here
             # because we don't want to double count
-            op_result.record_result(op, cb.result)
+            op_results.record_result(op, op_cb.result)
 
 
 class BatchWriteOperation(BatchOperation):
@@ -201,35 +205,42 @@ class BatchWriteOperation(BatchOperation):
         else:
             self.ops.add(op)
 
-    def run_defer(self, db, op_result):
-        df = OperationResultDefer(op_result, db.ioloop)
+    def run_defer(self, op_results):
         if not self.ops:
+            df = defer.Defer()
             df.done = True
             return df
 
         def record_result(op, cb):
-            self.have_result(op_result, cb, op=op)
+            self.have_result(op_results, cb, op=op)
 
-        all_batch_defers = []
         def handle_batch_result(cb):
-            result.update_write_capacity(cb.kwargs.get('write_capacity', {}))
-            if all(df.done for df in all_batch_defers) and not df.done:
-                self.have_result(op_result, cb)
-                df.callback(cb)
+            op_results.update_write_capacity(cb.kwargs.get('write_capacity', {}))
+            #self.have_result(op_results, cb)
 
-        for op_set in utils.segment(self.ops, constants.MAX_BATCH_WRITE_ITEMS):
-            batch = db.batch_write()
-            for op in op_set:
+        # We might have more operations than we can put in single batch, so prepare ourselves.
+        all_ops = list(self.ops)
+        batch = op_results.db.batch_write()
+
+        while all_ops:
+            op = all_ops.pop()
+            try:
                 op_df = op.add_to_batch(batch)
+            except errors.ExceededBatchRequestsError:
+                # Too many requests, put it back
+                all_ops.append(op)
+                break
+            else:
                 op_df.add_callback(functools.partial(record_result, op))
 
-            batch_df = batch.defer()
-            all_batch_defers.append(batch_df)
+        batch_df = batch.defer()
+        batch_df.add_callback(handle_batch_result)
 
-        for batch_df in all_batch_defers:
-            batch_df.add_callback(handle_batch_result)
+        # If there are more batches left, leave them for the next round.
+        if all_ops:
+            op_results.next_ops.append(BatchWriteOperation(all_ops))
 
-        return df
+        return batch_df
 
 
 class BatchReadOperation(BatchOperation):
@@ -241,41 +252,43 @@ class BatchReadOperation(BatchOperation):
         else:
             self.ops.add(op)
 
-    def run_defer(self, db, op_result):
-        df = OperationResultDefer(op_result, db.ioloop)
-
+    def run_defer(self, op_results):
         if not self.ops:
+            df = defer.Defer()
             df.done = True
             return df
 
-        all_batch_defers = []
-        def handle_batch_result(cb):
-            result.update_read_capacity(cb.kwargs.get('read_capacity'))
-
-            if all(df.done for df in all_batch_defers) and not df.done:
-                self.have_result(op_result, cb)
-                df.callback(cb)
-
         def handle_op_result(op, cb):
-            self.have_result(op_result, cb, op=op)
+            self.have_result(op_results, cb, op=op)
 
-        for op_set in utils.segment(self.ops, constants.MAX_BATCH_READ_ITEMS):
-            batch = db.batch_read()
-            for op in op_set:
+        def handle_batch_result(cb):
+            op_results.update_read_capacity(cb.kwargs.get('read_capacity', {}))
+            #self.have_result(op_results, cb)
+
+        # We might have more operations than we can put in single batch, so prepare ourselves.
+        all_ops = list(self.ops)
+
+        batch = op_results.db.batch_read()
+        while all_ops:
+            op = all_ops.pop()
+            try:
                 op_df = op.add_to_batch(batch)
-
+            except errors.ExceededBatchRequestsError:
+                all_ops.append(op)
+                break
+            else:
                 # To collect our results per sub-operation, we'll need to add a
                 # hook to record our specific part of the response for each
                 # sub-op
                 op_df.add_callback(functools.partial(handle_op_result, op))
 
-            batch_df = batch.defer()
-            all_batch_defers.append(batch_df)
+        if all_ops:
+            op_results.next_ops.append(BatchReadOperation(all_ops))
 
-        for batch_df in all_batch_defers:
-            batch_df.add_callback(handle_batch_result)
+        batch_df = batch.defer()
+        batch_df.add_callback(handle_batch_result)
 
-        return df
+        return batch_df
 
 
 class PutOperation(Operation, _WriteBatchableMixin):
@@ -283,21 +296,17 @@ class PutOperation(Operation, _WriteBatchableMixin):
         self.table = table
         self.entity = entity
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
-
+    def run_defer(self, op_results):
         def record_result(cb):
-            result.record_result(self, 
+            op_results.record_result(self, 
                                  cb.result, 
                                  read_capacity=cb.kwargs.get('read_capacity'), 
                                  write_capacity=cb.kwargs.get('write_capacity'))
-            df.callback(cb)
 
-        op_df = getattr(db, self.table.__name__).put_defer(self.entity)
+        op_df = getattr(op_results.db, self.table.__name__).put_defer(self.entity)
         op_df.add_callback(record_result)
 
-        return df
+        return op_df
 
     def add_to_batch(self, batch):
         return getattr(batch, self.table.__name__).put(self.entity)
@@ -313,21 +322,17 @@ class DeleteOperation(Operation, _WriteBatchableMixin):
         self.table = table
         self.key = key
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
-
+    def run_defer(self, op_results):
         def record_result(cb):
-            result.record_result(self, 
+            op_results.record_result(self, 
                                  cb.result, 
                                  read_capacity=cb.kwargs.get('read_capacity'), 
                                  write_capacity=cb.kwargs.get('write_capacity'))
-            df.callback(cb)
 
-        op_df = getattr(db, self.table.__name__).delete_defer(self.key)
+        op_df = getattr(op_results.db, self.table.__name__).delete_defer(self.key)
         op_df.add_callback(record_result)
 
-        return df
+        return op_df
 
     def add_to_batch(self, batch):
         return getattr(batch, self.table.__name__).delete(self.key)
@@ -343,21 +348,17 @@ class GetOperation(Operation, _ReadBatchableMixin):
         self.table = table
         self.key = key
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
-
+    def run_defer(self, op_results):
         def record_result(cb):
-            result.record_result(self, 
+            op_results.record_result(self, 
                                  cb.result, 
                                  read_capacity=cb.kwargs.get('read_capacity'), 
                                  write_capacity=cb.kwargs.get('write_capacity'))
-            df.callback(cb)
 
-        op_df = getattr(db, self.table.__name__).get_defer(self.key)
+        op_df = getattr(op_results.db, self.table.__name__).get_defer(self.key)
         op_df.add_callback(record_result)
 
-        return df
+        return op_df
 
     def add_to_batch(self, batch):
         return getattr(batch, self.table.__name__).get(self.key)
@@ -526,12 +527,6 @@ class OperationResult(object):
         if write_capacity:
             self.update_write_capacity(write_capacity)
 
-        next_ops = op.result(result)
-        if next_ops:
-            self.next_ops += next_ops
-
-        return next_ops
-
     def rethrow(self):
         for op, (_, err) in self.iteritems():
             if err:
@@ -589,4 +584,4 @@ class QueryOperationResult(OperationResult):
             return super(QueryOperationResult, self).record_result(op, result, read_capacity, write_capacity)
 
 
-__all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "OperationSet"]
+__all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "OperationResult"]

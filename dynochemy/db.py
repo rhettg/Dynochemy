@@ -15,7 +15,7 @@ import collections
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
-from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, parse_error
+from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, ExceededBatchRequestsError, parse_error
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
@@ -483,7 +483,7 @@ class WriteBatch(Batch):
         log.debug("Building request %r", req_key)
 
         if len(self._requests) >= constants.MAX_BATCH_WRITE_ITEMS:
-            raise Error("Too many requests")
+            raise ExceededBatchRequestsError("Too many requests")
 
         self._request_defer[req_key] = df
         self._request_data[req_key] = (table.name, args)
@@ -506,7 +506,7 @@ class WriteBatch(Batch):
         log.debug("Building request %r", req_key)
 
         if len(self._requests) >= constants.MAX_BATCH_WRITE_ITEMS:
-            raise Error("Too many requests")
+            raise ExceededBatchRequestsError("Too many requests")
 
         self._request_defer[req_key] = df
         self._request_data[req_key] = (table.name, args)
@@ -586,7 +586,7 @@ class ReadBatch(Batch):
             request = (table.name, (key,))
 
         if len(self._requests) >= constants.MAX_BATCH_READ_ITEMS:
-            raise Error("Too many requests")
+            raise ExceededBatchRequestsError("Too many requests")
 
         self._request_defer[request] = df
         self._request_data[request] = (table.name, req_key)

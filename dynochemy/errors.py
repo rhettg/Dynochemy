@@ -20,6 +20,8 @@ class DuplicateBatchItemError(Error): pass
 
 class IncompleteSolventError(Error): pass
 
+class ExceededBatchRequestsError(Error): pass
+
 class DynamoDBError(Error): pass
 
 class ProvisionedThroughputError(DynamoDBError): pass
