@@ -50,16 +50,17 @@ class GetAndRemoveTestCase(testutil.DBTestCase):
         v = self.TestView(self.db)
 
         del_op = operation.DeleteOperation(testutil.TestTable, 'rhettg')
+        results = operation.OperationResult(self.db)
 
         prev_ops, current_ops = v.operations_for_operation(del_op)
 
         assert prev_ops
         assert not current_ops
 
-        res = prev_ops[0].run(self.db)
+        prev_ops[0].run(results)
 
-        assert res.next_ops
-        res.next_ops[0].run(self.db)
+        assert results.next_ops
+        results.next_ops[0].run(results)
 
         assert 'value' not in self.db.TestTable['rhettg']
 
