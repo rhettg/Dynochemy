@@ -39,13 +39,13 @@ class Solvent(object):
     """
     def __init__(self):
         # We always start with an operation set, because everything can be reduced into it.
-        self.op_seq = [operation.OperationSet()]
+        self.operations = []
 
     def add_operation(self, op):
-        self.op_seq[0].add(op)
+        self.operations.append(op)
 
     def __len__(self):
-        return sum(len(op_set) for op_set in self.op_seq)
+        return len(self.operations)
 
     def put(self, table, entity):
         table_cls = classify(table)
@@ -95,102 +95,175 @@ class Solvent(object):
         df.add_callback(handle_result)
 
     def run_defer(self, db):
-        # This is a tough little chunk of code. Not really clear how to
-        # refactor to make easier, so I'll try to write a quick overview.
-        # Basically, our entire solvent is running under a single defer object
-        # ('final_df'), which will be called back with the entire defer is
-        # complete. The argument to that callback will be a 'OperationResult'
-        # object which provides a mapping from operation to result.
+        run = SolventRun(db, self.ops)
+        return run.run_defer()
 
-        # During each attempt inside this defer, we'll take all our operations,
-        # combine them together into a single operation and run it.  If, after
-        # processing the results of that operation (in handle_result), there
-        # are additional operations to run, or operations which need to be
-        # tried again due to certain failures, we'll do another loop if it.
-        final_results = operation.OperationResult(db)
-        final_df = operation.OperationResultDefer(final_results, db.ioloop)
 
-        # Ideally, a solvent can be run multiple times against different databases.
-        # To keep our op_sequence un-molested, we'll create a copy before doing any
-        # view operations
-        op_sequence = view.view_operations(db, self.op_seq)
+class SolventRun(object):
+    def __init__(self, db, ops):
+        self.db = db
 
-        # Note: our attempts counter exists outside the closure, and do to
-        # scoping rules, if we want a counter we need to put it in an array so
-        # it persists. I know it's weird, but go ahead and try it.
+        self.op_seq = view.view_operations(db, [ops])
 
-        # How many attempts (usually due to a failure)
-        attempts = [0]
+        self.op_results = operation.OperationResults()
+        self.defer = operation.OperationResultDefer(self.op_results, db.ioloop)
 
-        def handle_result(cb):
-            remaining_ops = operation.OperationSet()
-            results, err = cb.result
-            for op, (r, err) in results.iteritems():
+        self.current_op_dfs = []
+
+    def add_operation(self, op):
+        if not self.op_seq:
+            self.op_seq.append([])
+        self.op_seq[0].append(op)
+
+    def run_defer(self):
+        self.next_step()
+
+        return self.defer
+
+    def next_step(self):
+        if not self.op_seq:
+            self.defer.callback(None)
+
+        next_ops = []
+        # Start our set of operations off with whatever our results object says we have to do.
+        # These are usually complex operations with multiple stages.
+        while self.op_results.next_ops:
+            next_ops.append(self.op_results.next_ops.pop(0))
+
+        # Next, grab whatever is in our known operation sequence.
+        next_ops += self.op_seq.pop(0)
+
+        for op in OperationSet(next_ops).ops:
+            op_df = op.run_defer(results.db)
+            self.current_op_dfs.append(op_df)
+
+        # We add our callbacks all at once, because in sync mode, we want to
+        # ensure all our op_dfs have been created before we start to look for
+        # finished ones.
+        for op_df in self.current_op_dfs:
+            # We give each op an opportunity to store it's own results.
+            def handle_op_result(cb):
+                op.have_result(results, cb)
+
+            op_df.add_callback(functools.partial(op.have_result, results))
+
+            # After each op, we also need to check for completion of all our
+            # ops (based on the all_op_dfs list itself)
+            op_df.add_callback(self.check_step_done)
+
+
+    def check_step_done(self, cb):
+        """Check if our solvent has completed a set of operations and handle errors"""
+        if self.current_op_dfs and all(df.done for df in self.current_op_dfs):
+
+            # We have a current list, and they are all done. So this guy is complete.
+            del self.current_op_dfs[:]
+
+            has_failed_ops = self.requeue_failed_ops()
+            if has_failed_ops:
+                delay_secs = 0.8 * results.error_attempts
+                log.debug("Trying again in %.1f seconds", delay_secs)
+
+                db = results_df.op_result.db
+                if db.ioloop:
+                    db.ioloop.add_timeout(time.time() + delay_secs, self.next_step)
+                else:
+                    # No ioloop, do it inline
+                    time.sleep(delay_secs)
+                    self.next_step()
+            else:
+                self.next_step()
+
+
+    def requeue_failed_ops(self):
+        has_failures = False
+
+        # We'll only requeue failed operations a fixed number of times.
+        if self.op_results.error_attempts < MAX_ATTEMPTS:
+            # Check for errors and do some retries.
+            for op in self.op_results:
+                _, err = self.op_results[op]
+
                 # Certain types of errors we know we can try again just be re-executing the same operation.
                 # Other errors, or successes, we'll just record and carry on.
                 if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
                     log.debug("Provisioning error for %r on table %r", op, op.table.name)
-                    remaining_ops.add(op)
-                else:
-                    final_results.record_result(op, (r, err))
+                    self.add_operation(op)
+                    has_failures = True
+
+        return has_failures
 
 
-            # It's possible that upon recording results, an operation
-            # may have a follow-up operation. So we'll add taht to our
-            # remaining ops.
-            if results.next_ops:
-                # We have more operations. Create or add these operations to the next
-                # step in the sequence.
-                if len(op_sequence) <= 1:
-                    op_sequence.append(operation.OperationSet())
-                for op in results.next_ops:
-                    op_sequence[1].add(op)
+class OperationSet(object):
+    """Object for combining multiple operations together intelligently.
 
-            # We've updated individual results piecemeal, but we're going to
-            # need our capacity values as well.
-            final_results.update_write_capacity(results.write_capacity)
-            final_results.update_read_capacity(results.read_capacity)
+    Individual operations such as Put and Get and some Updates can be combined together into batches.
+    """
+    def __init__(self, operation_list=None):
+        # Really we can combine everything into into two operations
+        self.update_ops = []
+        self.other_ops = []
+        self.batch_write_op = operation.BatchWriteOperation()
+        self.batch_read_op = operation.BatchReadOperation()
 
-            if remaining_ops and attempts[0] < MAX_ATTEMPTS:
-                log.debug("%d remaining operations after attempt %d", len(remaining_ops), attempts[0])
+        if operation_list:
+            for op in operation_list:
+                self.add(op)
 
-                # We need to queue another operation
-                def run_remaining_ops():
-                    next_df = remaining_ops.run_defer(db)
-                    next_df.add_callback(handle_result)
+    def __len__(self):
+        return len(self.update_ops) + len(self.other_ops) + len(self.batch_write_op) + len(self.batch_read_op)
 
-                # We only track attempts if we are doing more because of failures.
-                attempts[0] += 1
-                delay_secs = 0.8 * attempts[0]
-                log.debug("Trying again in %.1f seconds", delay_secs)
+    def __copy__(self):
+        return OperationSet(list(self))
 
-                if db.ioloop:
-                    db.ioloop.add_timeout(time.time() + delay_secs, run_remaining_ops)
-                else:
-                    # No ioloop, do it inline
-                    time.sleep(delay_secs)
-                    run_remaining_ops()
+    def __iter__(self):
+        for op in itertools.chain(self.update_ops, self.other_ops, self.batch_write_op, self.batch_read_op):
+            yield op
 
-            elif remaining_ops:
-                log.warning("Gave up after %d attempts", attempts[0])
-                final_df.callback(cb)
+    @property
+    def ops(self):
+        ops = []
+        ops += self.update_ops
+        ops += self.other_ops
+        if len(self.batch_write_op) > 0:
+            ops.append(self.batch_write_op)
+        if len(self.batch_read_op) > 0:
+            ops.append(self.batch_read_op)
+
+        return ops
+
+    def add(self, op):
+        if isinstance(op, operation._WriteBatchableMixin):
+            self.batch_write_op.add(op)
+        elif isinstance(op, operation._ReadBatchableMixin):
+            self.batch_read_op.add(op)
+        elif isinstance(op, operation.UpdateOperation):
+            self.add_update(op)
+        elif isinstance(op, operation.QueryOperation):
+            self.other_ops.append(op)
+        else:
+            raise ValueError("Don't know how to add op %r" % op)
+
+    def add_update(self, update_op):
+        # We could keep just a list of all updates and then execute them
+        # sequentially, but updates might be easily combined if they are for the same
+        # table/key pair
+
+        combined_update_op = False
+        new_update_ops = []
+        for op in self.update_ops:
+            if not combined_update_op and op.table == update_op.table and op.key == update_op.key:
+                # We can combine these updates
+                new_update_ops.append(op.combine_updates(update_op))
+                combined_update_op = True
             else:
-                log.debug("Step complete")
-                attempts[0] = 0
-                op_sequence.pop(0)
+                new_update_ops.append(op)
 
-                if len(op_sequence) > 0:
-                    log.debug("Starting next step in sequence, %d operations", len(op_sequence[0]))
-                    next_df = op_sequence[0].run_defer(db)
-                    next_df.add_callback(handle_result)
-                else:
-                    log.debug("Solvent complete")
-                    # We're all done, complete the final df
-                    final_df.callback(cb)
+        if not combined_update_op:
+            new_update_ops.append(update_op)
 
-        op_df = op_sequence[0].run_defer(db)
-        op_df.add_callback(handle_result)
-        return final_df
+        self.update_ops = new_update_ops
+        return
 
 
 if __name__ == '__main__':

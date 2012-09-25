@@ -35,17 +35,17 @@ def view_operations(db, op_sequence):
 
         new_op_set = copy.copy(op_set)
         for new_op in seq_current_ops:
-            new_op_set.add(new_op)
+            new_op_set.append(new_op)
 
         new_op_seq.append(new_op_set)
 
         if seq_prev_ops:
             # If we don't have a previous operation set, add one
             if len(new_op_seq) == 1:
-                new_op_seq.insert(-1, operation.OperationSet())
+                new_op_seq.insert(-1, [])
 
             for new_op in seq_prev_ops:
-                new_op_seq[-2].add(new_op)
+                new_op_seq[-2].append(new_op)
 
     return new_op_seq
 

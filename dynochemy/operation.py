@@ -83,105 +83,6 @@ class Operation(object):
                              write_capacity=cb.kwargs.get('write_capacity'))
 
 
-class OperationSet(Operation):
-    """Operation that does multiple sub-operations
-
-    When a OperationSet is executed, multiple sub-requests may go to the
-    database simulaneously (in the case of async operation).
-
-    Because of that, within an operation set there is no guarantee about the
-    order in which operations will be executed.
-    """
-    def __init__(self, operation_list=None):
-        # Really we can combine everything into into two operations
-        self.update_ops = []
-        self.other_ops = []
-        self.batch_write_op = BatchWriteOperation()
-        self.batch_read_op = BatchReadOperation()
-
-        if operation_list:
-            for op in operation_list:
-                self.add(op)
-
-    def __len__(self):
-        return len(self.update_ops) + len(self.other_ops) + len(self.batch_write_op) + len(self.batch_read_op)
-
-    def __copy__(self):
-        return OperationSet(list(self))
-
-    def __iter__(self):
-        for op in itertools.chain(self.update_ops, self.other_ops, self.batch_write_op, self.batch_read_op):
-            yield op
-
-    def add(self, op):
-        if isinstance(op, _WriteBatchableMixin):
-            self.batch_write_op.add(op)
-        elif isinstance(op, _ReadBatchableMixin):
-            self.batch_read_op.add(op)
-        elif isinstance(op, UpdateOperation):
-            self.add_update(op)
-        elif isinstance(op, QueryOperation):
-            self.other_ops.append(op)
-        else:
-            raise ValueError("Don't know how to add op %r" % op)
-
-    def add_update(self, update_op):
-        # We could keep just a list of all updates and then execute them
-        # sequentially, but updates might be easily combined if they are for the same
-        # table/key pair
-
-        combined_update_op = False
-        new_update_ops = []
-        for op in self.update_ops:
-            if not combined_update_op and op.table == update_op.table and op.key == update_op.key:
-                # We can combine these updates
-                new_update_ops.append(op.combine_updates(update_op))
-                combined_update_op = True
-            else:
-                new_update_ops.append(op)
-
-        if not combined_update_op:
-            new_update_ops.append(update_op)
-
-        self.update_ops = new_update_ops
-        return
-
-    def run_defer(self, db, op_result):
-        # This one is a little more complicated. We have to run all
-        # sub-operations and then combine the OperationResult objects
-        df = OperationResultDefer(op_result, db.ioloop)
-
-        batch_read_defer = None
-        batch_write_defer = None
-        individual_defers = []
-
-        # This result handler is going to track all our results. When they are done, we complete the master defer object
-        # and report the results
-        def handle_result(cb):
-            if (batch_write_defer and batch_write_defer.done) \
-               and (batch_read_defer and batch_read_defer.done) \
-               and all(df.done for df in individual_defers):
-                # This guy takes a defer itself, we'll just use the last one, but it shouldn't really matter
-                # Error handling is weird at this level.
-                df.callback(cb)
-
-        for op in itertools.chain(self.update_ops, self.other_ops):
-            op_defer = op.run_defer(db, op_result)
-            individual_defers.append(op_defer)
-            op_defer.add_callback(handle_result)
-
-        # Note: we're doing this last because in sync mode, stuff is always
-        # done immediately and we don't want to trigger the callback till we
-        # have created all the defers.
-        batch_write_defer = self.batch_write_op.run_defer(db, op_result)
-        batch_write_defer.add_callback(record_result)
-
-        batch_read_defer = self.batch_read_op.run_defer(db, op_result)
-        batch_read_defer.add_callback(record_result)
-
-        return df
-
-
 def combine_dicts(left_dict, right_dict, combiner=None):
     """Utility function for combining two dictionaries (union) with a user specified 'combiner' function
 
@@ -593,14 +494,11 @@ class OperationResultDefer(defer.Defer):
         self.op_result = op_result
         self.error = None
 
-    def callback(self, cb):
-        # We are always called via another callback
-        assert cb.done
-        _, err = cb.result
+    def callback(self, err):
         if err:
             self.error = err
 
-        super(OperationResultDefer, self).callback(cb)
+        super(OperationResultDefer, self).callback(None)
         
     @property
     def result(self):
@@ -617,6 +515,7 @@ class OperationResult(object):
         self.write_capacity = {}
 
         self.next_ops = []
+        self.error_attempts = 0
 
     def record_result(self, op, result, read_capacity=None, write_capacity=None):
         self.results[op] = result

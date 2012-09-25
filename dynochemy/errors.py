@@ -18,11 +18,14 @@ class SyncUnallowedError(Error): pass
 
 class DuplicateBatchItemError(Error): pass
 
+class IncompleteSolventError(Error): pass
+
 class DynamoDBError(Error): pass
 
 class ProvisionedThroughputError(DynamoDBError): pass
 
 class UnprocessedItemError(DynamoDBError): pass
+
 
 def parse_error(raw_error):
     """Parse the error we get out of Boto into something we can code around"""
