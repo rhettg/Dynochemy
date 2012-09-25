@@ -86,8 +86,12 @@ class View(object):
             return [GetAndRemoveOperation(op.table, op.key, self)], []
         elif isinstance(op, operation.UpdateOperation):
             log.warning("View %s doesn't know how to handle an update", self)
+        elif isinstance(op, (operation.GetOperation, operation.QueryOperation)):
+            pass
         else:
             raise NotImplementedError(op)
+
+        return [], []
 
     def add(self, entity):
         return []
