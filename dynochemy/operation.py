@@ -2,22 +2,18 @@
 """
 This module contains classes for abstract Dynochemy operations.
 
-This abstraction is a framework for combining multiple operations into sets of
-operations that can be exectuted together.
-
 There are a few levels of usage here:
 
     * Primitive Operations (Get, Put, Delete, Update)
     * Combined Operations (single requests with multiple operations in them: BatchRead, BatchWrite)
-    * OperationsSet (operations and combined operations that can be run simulataneously)
-    * OperationSequence (a sequence of operation sets that must be run in order. stops on failure)
+    * Operation sequences (Batches with too many operations to execute at once, Queries and Scans)
 
 Note that any instance of 'Operation' can be run individually, but the real
 power come from allowing a higher power to manage the execution (see solvent)
 
-Another interesting object is the OperationResult, which provides a way for
+Another important object is the OperationResult, which provides a way for
 results to be store the result of a combined operation, but keyed by primitive
-operation.
+operation. To use an operation directly, an OperationResult object must be provided.
 
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
@@ -51,6 +47,17 @@ class Operation(object):
         return hash(self.unique_key)
 
     def run(self, op_results):
+        # We require passing in an OperationResult object which might seem
+        # weird.  This is one reason why Operation should really be considered
+        # an internal API... or at the very least, should probalby never be
+        # 'run()' directly.  In an earlier design, we provided the
+        # OperationResult for each operation, and then the Solvent() (the more
+        # common interface) took care of combining all these results together.
+        # However, this proved to be really hard to understand and debug.
+
+        # So in the interest of our sanity, an operation is provied the object
+        # it will deliver it's results through.
+
         df = self.run_defer(op_results)
         result, err = df()
         if err:
@@ -202,12 +209,11 @@ class BatchWriteOperation(BatchOperation):
             df.done = True
             return df
 
-        def record_result(op, cb):
+        def handle_op_result(op, cb):
             op.have_result(op_results, cb, ignore_capacity=True)
 
         def handle_batch_result(cb):
             op_results.update_write_capacity(cb.kwargs.get('write_capacity', {}))
-            #self.have_result(op_results, cb)
 
         # We might have more operations than we can put in single batch, so prepare ourselves.
         all_ops = list(self.ops)
@@ -222,7 +228,10 @@ class BatchWriteOperation(BatchOperation):
                 all_ops.append(op)
                 break
             else:
-                op_df.add_callback(functools.partial(record_result, op))
+                # To collect our results per sub-operation, we'll need to add a
+                # hook to record our specific part of the response for each
+                # sub-op
+                op_df.add_callback(functools.partial(handle_op_result, op))
 
         batch_df = batch.defer()
         batch_df.add_callback(handle_batch_result)
@@ -244,6 +253,8 @@ class BatchReadOperation(BatchOperation):
             self.ops.add(op)
 
     def run_defer(self, op_results):
+        # The implementation here is very similiar to BatchRead, so you should
+        # probalby reference that for more explanation.
         if not self.ops:
             df = defer.Defer()
             df.done = True
@@ -254,9 +265,7 @@ class BatchReadOperation(BatchOperation):
 
         def handle_batch_result(cb):
             op_results.update_read_capacity(cb.kwargs.get('read_capacity', {}))
-            #self.have_result(op_results, cb)
 
-        # We might have more operations than we can put in single batch, so prepare ourselves.
         all_ops = list(self.ops)
 
         batch = op_results.db.batch_read()
@@ -268,9 +277,6 @@ class BatchReadOperation(BatchOperation):
                 all_ops.append(op)
                 break
             else:
-                # To collect our results per sub-operation, we'll need to add a
-                # hook to record our specific part of the response for each
-                # sub-op
                 op_df.add_callback(functools.partial(handle_op_result, op))
 
         if all_ops:
@@ -372,12 +378,15 @@ class QueryOperation(Operation):
 
     def reverse(self, reverse=True):
         self.args['reverse'] = reverse
+        return self
 
     def limit(self, limit):
         self.args['limit'] = limit
+        return self
 
     def last_seen(self, range_id):
         self.args['last_seen'] = range_id
+        return self
 
     @property
     def unique_key(self):
@@ -386,6 +395,10 @@ class QueryOperation(Operation):
         return ('QUERY', self.table.name, self.hash_key, tuple((k, v) for k, v in self.args.iteritems() if k != 'last_seen'))
 
     def have_result(self, op_results, op_cb, **kwargs):
+        # Query result handling is special.
+        # Queries can happen in multiple operations.
+        # We need to potentially update our resulting QueryResult object with new entries in place.
+        # Also, we might need to queue up our operation again with different bounds if there are more results available.
         new_query_result, new_err = op_cb.result
 
         if self in op_results:
@@ -421,7 +434,9 @@ class QueryOperation(Operation):
 
 
 class OperationResultDefer(defer.Defer):
-    """Special defer that returns a OperationResult, error tuple
+    """Special defer that is bound to a result before it's completed.
+
+    The only 'result' that can come from the normal 'callback()' flow is in the case of errors.
     """
     def __init__(self, op_result, io_loop):
         super(OperationResultDefer, self).__init__(io_loop)
@@ -439,7 +454,6 @@ class OperationResultDefer(defer.Defer):
         return self.op_result, self.error
 
 
-# TODO: Make this just a dict?
 class OperationResult(object):
     def __init__(self, db):
         self.db = db

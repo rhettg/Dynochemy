@@ -21,7 +21,7 @@ Really just useful for seeing how the API would work if this library was complet
 
 ### Known TODOs
 
-  * Solvent: Needs query and scan support
+  * Solvent: Needs scan support
   * Views: Need the ability to regenerate views from scratch, or even partial rewrites to help with failure scenarios.
   * Solvent: Need throttling support rather than always hammer until provisioning error.
 
