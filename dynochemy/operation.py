@@ -376,79 +376,39 @@ class QueryOperation(Operation):
     def limit(self, limit):
         self.args['limit'] = limit
 
-    @property
-    def unique_key(self):
-        # Assumes updates for the same key have been combined together
-        return ('QUERY', self.table.name, self.hash_key, tuple(self.args.items()))
-
-    def run_defer(self, db):
-        result = QueryOperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
-
-        segment_op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
-
-        def record_result(cb):
-            result.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
-
-            op_result, err = cb.result
-            segment_op, (query_result, err) = list(op_result.iteritems())[0]
-            if err or not query_result.has_next:
-                df.callback(cb)
-            else:
-                last_key = utils.parse_key(query_result.result_data['LastEvaluatedKey'])
-                next_op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
-                next_op.last_seen(last_key[1])
-                next_op_df = next_op.run_defer(db)
-                next_op_df.add_callback(record_result)
-
-        op_df = segment_op.run_defer(db)
-        op_df.add_callback(record_result)
-        return df
-
-
-class QuerySegmentOperation(Operation):
-    def __init__(self, table, key, args=None):
-        self.table = table
-        self.hash_key = key
-        self.args = args or {}
-
-    def __copy__(self):
-        op = QuerySegmentOperation(self.table, self.hash_key, args=copy.copy(self.args))
-        return op
-
-    def range(self, start=None, end=None):
-        self.args['range'] = (start, end)
-        return self
-
-    def reverse(self, reverse=True):
-        self.args['reverse'] = reverse
-
-    def limit(self, limit):
-        self.args['limit'] = limit
-
     def last_seen(self, range_id):
         self.args['last_seen'] = range_id
 
     @property
     def unique_key(self):
-        # Assumes updates for the same key have been combined together
-        return ('QUERY_SEGMENT', self.table.name, self.hash_key, tuple(self.args.items()))
+        # We are not including the 'last_seen' argument in our hash because we
+        # want all the different segments of our query to combine together.
+        return ('QUERY', self.table.name, self.hash_key, tuple((k, v) for k, v in self.args.iteritems() if k != 'last_seen'))
 
-    def run_defer(self, db):
-        result = OperationResult(db)
-        df = OperationResultDefer(result, db.ioloop)
+    def have_result(self, op_results, op_cb, **kwargs):
+        new_query_result, new_err = op_cb.result
 
-        def record_result(cb):
-            result.record_result(self, 
-                                 cb.result, 
-                                 read_capacity=cb.kwargs.get('read_capacity'), 
-                                 write_capacity=cb.kwargs.get('write_capacity'))
-            df.callback(cb)
+        if self in op_results:
+            # We already have part of this query, update our results in place.
+            query_result, err = op_results[self]
+            if new_err:
+                # Mark us as an error
+                op_results.record_result(self, (query_result, new_err))
+            else:
+                op_results.record_result(self, 
+                                         (query_result.combine(new_query_result), new_err), 
+                                         read_capacity=op_cb.kwargs.get('read_capacity'))
+        else:
+            super(QueryOperation, self).have_result(op_results, op_cb)
 
-        query = getattr(db, self.table.__name__).query(self.hash_key)
+        if new_query_result.has_next:
+            last_key = utils.parse_key(new_query_result.result_data['LastEvaluatedKey'])
+            next_op = copy.copy(self)
+            next_op.last_seen(last_key[1])
+            op_results.next_ops.append(next_op)
+
+    def run_defer(self, op_results):
+        query = getattr(op_results.db, self.table.__name__).query(self.hash_key)
         for param, arg in self.args.iteritems():
             if param == 'range':
                 query = query.range(*arg)
@@ -456,8 +416,8 @@ class QuerySegmentOperation(Operation):
                 query = getattr(query, param)(arg)
 
         op_df = query.defer()
-        op_df.add_callback(record_result)
-        return df
+        op_df.add_callback(functools.partial(self.have_result, op_results))
+        return op_df
 
 
 class OperationResultDefer(defer.Defer):
@@ -536,28 +496,6 @@ class OperationResult(object):
 
     def __repr__(self):
         return repr(self.results)
-
-
-class QueryOperationResult(OperationResult):
-    """Special version of OperationResult which understands that we'll want a
-    combined query result for QueryOperation (made up of possibly sereral
-    QuerySegmentOperations)
-    """
-    def record_result(self, op, result, read_capacity=None, write_capacity=None):
-        if op in self.results:
-            new_result, _ = result
-            old_result, _ = self.results[op]
-
-            new_query_result, err = new_result.results.values()[0]
-            assert not err
-
-            old_query_result, err = old_result.results.values()[0]
-            assert not err
-
-            combined_results = old_query_result.combine(new_query_result)
-            return super(QueryOperationResult, self).record_result(op, (combined_results, None), read_capacity, write_capacity)
-        else:
-            return super(QueryOperationResult, self).record_result(op, result, read_capacity, write_capacity)
 
 
 __all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "OperationResult"]

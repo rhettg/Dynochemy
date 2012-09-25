@@ -285,19 +285,35 @@ class QueryOperationTestCase(OperationTestCase):
     def restore_query_limit(self):
         sql.DEFAULT_LIMIT = self._old_limit
 
+    @setup
+    def create_op(self):
+        self.op = operation.QueryOperation(FullTestTable, 'my_key')
+
+        self.op.range(0, 2)
+        self.op.limit(20)
+        self.results = operation.OperationResult(self.db)
+
     def test(self):
-        op = operation.QueryOperation(FullTestTable, 'my_key')
 
-        op.range(0, 2)
-        op.limit(20)
+        self.op.run(self.results)
 
-        result = op.run(self.db)
-
-        query_result, err = result[op]
+        query_result, err = self.results[self.op]
         if err:
             raise err
 
         # We should only have 2, because that's our DEFAULT_LIMIT
+        entities = list(query_result)
+        assert_equal(len(entities), 2)
+
+        assert self.results.next_ops
+        
+        next_op = self.results.next_ops.pop()
+        next_op.run(self.results)
+
+        query_result, err = self.results[self.op]
+        if err:
+            raise err
+
         entities = list(query_result)
         assert_equal(len(entities), 3)
 
