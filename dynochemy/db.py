@@ -857,6 +857,31 @@ class CombinedQueryResults(QueryResults):
         self.result_data['Count'] = query_results.result_data['Count'] + other_query_results.result_data['Count']
 
 
+class SecondaryQueryResults(object):
+    def __init__(self, query_results, table, op_results, key):
+        self.query_results = query_results
+        self.table = table
+        self.op_results = op_results
+        self.key_func = key
+
+    def combine(self, other_results):
+        self.query_results = self.query_results.combine(other_results)
+        return self
+
+    def __iter__(self):
+        for item in self.query_results:
+            key = self.key_func(item)
+            op = operation.GetOperation(self.table, key)
+            full_item, err = self.op_results[op]
+            if err:
+                raise err
+
+            yield full_item
+
+    def __len__(self):
+        return len(self.query_results)
+
+
 class ScanResults(Results):
     def __init__(self, scan, result_data):
         self.scan = scan

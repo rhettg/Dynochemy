@@ -17,6 +17,7 @@ import types
 from . import operation
 from . import view
 from . import errors
+from . import db
 
 log = logging.getLogger(__name__)
 
@@ -71,10 +72,15 @@ class Solvent(object):
         self.add_operation(op)
         return op
 
-    def query(self, table, key):
-        table_cls = classify(table)
-        op = operation.QueryOperation(table_cls, key)
-        self.add_operation(op)
+    def query(self, table_or_view, key):
+        table_or_view_cls = classify(table_or_view)
+        if issubclass(table_or_view_cls, db.Table):
+            op = operation.QueryOperation(table_or_view_cls, key)
+            self.add_operation(op)
+        else:
+            op = table_or_view_cls.query_op(key)
+            self.add_operation(op)
+
         return op
 
     def scan(self, table):
