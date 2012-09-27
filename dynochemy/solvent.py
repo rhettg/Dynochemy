@@ -109,8 +109,7 @@ class SolventRun(object):
     def __init__(self, db, ops):
         self.db = db
 
-        #self.op_seq = view.view_operations(db, [ops])
-        self.op_seq = [ops]
+        self.op_seq = view.view_operations(db, [ops])
 
         self.op_results = operation.OperationResult(db)
         self.defer = operation.OperationResultDefer(self.op_results, db.ioloop)
@@ -127,37 +126,16 @@ class SolventRun(object):
 
         return self.defer
 
-    def next_ops(self):
-
+    def next_step(self):
+        next_ops = []
         # Start our set of operations off with whatever our results object says we have to do.
         # These are usually complex operations with multiple stages.
-        remaining_ops = []
         while self.op_results.next_ops:
-            remaining_ops.append(self.op_results.next_ops.pop(0))
+            next_ops.append(self.op_results.next_ops.pop(0))
 
-        if remaining_ops:
-            return remaining_ops
-
-        # Ok, so we don't have any ops left over from the previous run. Let's see if we have anything
-        # left in our op sequence.
+        # Next, grab whatever is in our known operation sequence.
         if self.op_seq:
-            # Now we new ops for the first time, we need to run them through
-            # our view code to see if they generate additional operations
-            prev_ops, current_ops, next_ops = view.view_operations(self.op_seq.pop(0))
-
-            if next_ops:
-                self.op_seq.insert(0, next_ops)
-            if current_ops:
-                self.op_seq.insert(0, current_ops)
-            if prev_ops:
-                self.op_seq.insert(0, prev_ops)
-
-        else:
-            return []
-
-
-    def next_step(self):
-        next_ops = self.next_ops()
+            next_ops += self.op_seq.pop(0)
 
         if not next_ops:
             self.defer.callback(None)
