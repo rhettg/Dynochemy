@@ -133,8 +133,8 @@ class SolventRun(object):
         while self.op_results.next_ops:
             next_ops.append(self.op_results.next_ops.pop(0))
 
-        # Next, grab whatever is in our known operation sequence.
-        if self.op_seq:
+        # No ops left over from last time, grab the next part of the sequence.
+        if not next_ops and self.op_seq:
             next_ops += self.op_seq.pop(0)
 
         if not next_ops:
