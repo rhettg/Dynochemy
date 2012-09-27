@@ -213,7 +213,12 @@ class BatchWriteOperation(BatchOperation):
             op.have_result(op_results, cb, ignore_capacity=True)
 
         def handle_batch_result(cb):
-            op_results.update_write_capacity(cb.kwargs.get('write_capacity', {}))
+            # Note that we are not recording the full result for this op.
+            # This means that in the case of an error, there will be errors for each sub-op, but not
+            # one for the overall batch.
+            # We do however need to record the capacity used, which we can only do in aggregate.
+            if 'write_capacity' in cb.kwargs:
+                op_results.update_write_capacity(cb.kwargs['write_capacity'])
 
         # We might have more operations than we can put in single batch, so prepare ourselves.
         all_ops = list(self.ops)
@@ -238,7 +243,7 @@ class BatchWriteOperation(BatchOperation):
 
         # If there are more batches left, leave them for the next round.
         if all_ops:
-            op_results.next_ops.append(BatchWriteOperation(all_ops))
+            op_results.next_ops += all_ops
 
         return batch_df
 
@@ -280,7 +285,7 @@ class BatchReadOperation(BatchOperation):
                 op_df.add_callback(functools.partial(handle_op_result, op))
 
         if all_ops:
-            op_results.next_ops.append(BatchReadOperation(all_ops))
+            op_results.next_ops += all_ops
 
         batch_df = batch.defer()
         batch_df.add_callback(handle_batch_result)

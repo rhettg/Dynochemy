@@ -257,7 +257,7 @@ class MultiBatchReadTestCase(OperationTestCase):
 
         assert self.result.next_ops
 
-        next_batch = self.result.next_ops[0]
+        next_batch = operation.BatchReadOperation(self.result.next_ops)
         next_batch.run(self.result)
 
         for key, op in zip(self.keys, self.ops):
