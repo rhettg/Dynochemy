@@ -137,7 +137,7 @@ class SolventRun(object):
         for view in self.db.views_by_table(op.table):
             next_ops = view.operations_for_operation(op, result)
             if next_ops:
-                log.info("Found %d view operations for %r", len(next_ops), op)
+                log.debug("Found %d view operations for %r", len(next_ops), op)
 
             for new_op in next_ops:
                 self.add_operation(new_op)
