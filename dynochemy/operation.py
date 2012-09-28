@@ -353,6 +353,21 @@ class GetOperation(Operation, _ReadBatchableMixin):
         return ('GET', self.table.name, self.key)
 
 
+class GetAndDeleteOperation(GetOperation):
+    """Operation that does a Get, then a Delete
+
+    This is a replacement for doing just a straight Delete. First it does a Get, then it schedules a Delete to go afterwards.
+    This is useful in solvents because for views, to remove an entity, you really need to know what the entity is.
+    """
+    def have_result(self, op_results, op_cb):
+        super(GetAndDeleteOperation, self).have_result(op_results, op_cb)
+
+        entity, err = op_results[self]
+        if not err:
+            op_results.next_ops.append(DeleteOperation(self.table, self.key))
+
+
+
 class QueryOperation(Operation):
     """Combined query operation that runs multiple sub-queries until retieving all the requested results.
    
@@ -463,6 +478,7 @@ class OperationResult(object):
     def __init__(self, db):
         self.db = db
         self.results = {}
+        self.callbacks = []
 
         self.read_capacity = {}
         self.write_capacity = {}
@@ -479,11 +495,22 @@ class OperationResult(object):
         if write_capacity:
             self.update_write_capacity(write_capacity)
 
+        # Inform our result callbacks
+        [func(op) for func in self.callbacks]
+
     def rethrow(self):
         for op, (_, err) in self.iteritems():
             if err:
                 log.info("Failed Operation %r: %r", op, err)
                 raise err
+
+    def add_callback(self, func):
+        """Add a function to call when we get a result.
+
+        Argument will be an operation instance.
+        Generally the caller should know the result object and can look up the result itself.
+        """
+        self.callbacks.append(func)
 
     def update(self, other_result):
         assert self.db == other_result.db

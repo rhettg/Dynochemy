@@ -56,7 +56,7 @@ class Solvent(object):
 
     def delete(self, table, key):
         table_cls = classify(table)
-        op = operation.DeleteOperation(table_cls, key)
+        op = operation.GetAndDeleteOperation(table_cls, key)
         self.add_operation(op)
         return op
 
@@ -109,22 +109,38 @@ class SolventRun(object):
     def __init__(self, db, ops):
         self.db = db
 
-        self.op_seq = view.view_operations(db, [ops])
+        self.operations = copy.copy(ops)
 
         self.op_results = operation.OperationResult(db)
+        self.op_results.add_callback(self.handle_result)
+
         self.defer = operation.OperationResultDefer(self.op_results, db.ioloop)
 
         self.current_op_dfs = []
 
     def add_operation(self, op):
-        if not self.op_seq:
-            self.op_seq.append([])
-        self.op_seq[0].append(op)
+        self.operations.append(op)
 
     def run_defer(self):
         self.next_step()
 
         return self.defer
+
+    def handle_result(self, op):
+        result, err = self.op_results[op]
+        if err:
+            # Not going to do anything with errors
+            return
+
+        # This provides a hook for each operation that completes. We have the opportunity to
+        # do special stuff like interact with views based on the results of an operation.
+        for view in self.db.views_by_table(op.table):
+            next_ops = view.operations_for_operation(op, result)
+            if next_ops:
+                log.info("Found %d view operations for %r", len(next_ops), op)
+
+            for op in next_ops:
+                self.add_operation(op)
 
     def next_step(self):
         next_ops = []
@@ -134,10 +150,12 @@ class SolventRun(object):
             next_ops.append(self.op_results.next_ops.pop(0))
 
         # No ops left over from last time, grab the next part of the sequence.
-        if not next_ops and self.op_seq:
-            next_ops += self.op_seq.pop(0)
+        if not next_ops and self.operations:
+            next_ops += self.operations
+            del self.operations[:]
 
         if not next_ops:
+            # All done, no more operations to complete
             self.defer.callback(None)
             return
 
