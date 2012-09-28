@@ -138,10 +138,13 @@ wanted to create counts of how many entities in your table had a certain value, 
         table = EntityTable
         view_table = CountTable
 
-        def add(self, entity):
-            return [UpdateOperation(self.view_table, entity['value'], add={'count': 1})]
-        def remove(self, entity):
-            return [UpdateOperation(self.view_table, entity['value'], add={'count': -1})]
+        @classmethod
+        def add(cls, entity):
+            return [UpdateOperation(cls.view_table, entity['value'], add={'count': 1})]
+
+        @classmethod
+        def remove(cls, entity):
+            return [UpdateOperation(cls.view_table, entity['value'], add={'count': -1})]
 
     db.register(CountTable)
     db.register(EntityValueCountView)
