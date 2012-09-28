@@ -388,7 +388,7 @@ class QueryOperation(Operation):
         self.args = args or {}
 
     def __copy__(self):
-        op = QueryOperation(self.table, self.hash_key, args=copy.copy(self.args))
+        op = self.__class__(self.table, self.hash_key, args=copy.copy(self.args))
         return op
 
     def range(self, start=None, end=None):
