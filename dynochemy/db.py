@@ -31,6 +31,7 @@ class BaseDB(object):
         self.allow_sync = True
         self.ioloop = None
         self.tables = {}
+        self.views = {}
         self._tables_by_db_name = {}
         self._views_by_table = collections.defaultdict(list)
 
@@ -39,13 +40,17 @@ class BaseDB(object):
             self.tables[cls.__name__] = instance = cls(self)
             self._tables_by_db_name[cls.name] = instance
         elif issubclass(cls, view.View):
-            self._views_by_table[cls.table.__name__].append(cls(self))
+            self.views[cls.__name__] = instance = cls(self)
+            self._views_by_table[cls.table.__name__].append(instance)
 
     def __getattr__(self, name):
         try:
             return self.tables[name]
         except KeyError:
-            raise AttributeError(name)
+            try:
+                return self.views[name]
+            except KeyError:
+                raise AttributeError(name)
 
     def table_by_name(self, name):
         return self._tables_by_db_name[name]
