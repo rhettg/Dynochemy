@@ -120,6 +120,40 @@ class SolventSequenceTestCase(SolventTestCase):
             assert_equal(res['value'], 2)
 
 
+class SolventViewViewTestCase(SolventTestCase):
+    """Verify that our view created operations go through views also"""
+    @setup
+    def build_views(self):
+        class TestView(View):
+            table = TestTable
+            view_table = TestTable
+
+            @classmethod
+            def add(cls, op, result):
+                entity = op.entity
+                if entity['key'] == 'A':
+                    return [operation.PutOperation(cls.view_table, {'key': 'B'})]
+                if entity['key'] == 'B':
+                    return [operation.PutOperation(cls.view_table, {'key': 'C'})]
+                
+                return []
+
+        self.TestView = TestView
+        self.db.register(TestView)
+
+    def test(self):
+        solvent = Solvent()
+        solvent.put(TestTable, {'key': 'A'})
+        solvent.run(self.db)
+
+        ndx = 0
+        for res in self.db.TestTable.scan()():
+            ndx += 1
+            #pprint.pprint(res)
+
+        assert_equal(ndx, 3)
+
+
 class SolventViewTestCase(SolventTestCase):
     @setup
     def build_view(self):

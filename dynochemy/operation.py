@@ -367,7 +367,6 @@ class GetAndDeleteOperation(GetOperation):
             op_results.next_ops.append(DeleteOperation(self.table, self.key))
 
 
-
 class QueryOperation(Operation):
     """Combined query operation that runs multiple sub-queries until retieving all the requested results.
    
