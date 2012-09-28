@@ -139,8 +139,8 @@ class SolventRun(object):
             if next_ops:
                 log.info("Found %d view operations for %r", len(next_ops), op)
 
-            for op in next_ops:
-                self.add_operation(op)
+            for new_op in next_ops:
+                self.add_operation(new_op)
 
     def next_step(self):
         next_ops = []
