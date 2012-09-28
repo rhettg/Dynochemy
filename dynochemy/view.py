@@ -28,15 +28,18 @@ class View(object):
     view_table = None
 
     def __init__(self, db):
+        # We allow instances of this to exist to provide some amount of parallelism with tables.
+        # But i'm not yet quite sure if we really need to. All the important methods are classmethods
         self.db = db
 
-    def operations_for_operation(self, op, result):
+    @classmethod
+    def operations_for_operation(cls, op, result):
         if isinstance(op, operation.PutOperation):
-            return self.add(op, result)
+            return cls.add(op, result)
         elif isinstance(op, operation.GetAndDeleteOperation):
-            return self.remove(op, result)
+            return cls.remove(op, result)
         elif isinstance(op, operation.UpdateOperation):
-            return self.update(op, result)
+            return cls.update(op, result)
         elif isinstance(op, operation.DeleteOperation):
             # In a solvent, first we do a GetAndDeleteOperation, so this should have already been handled.
             pass
@@ -47,13 +50,16 @@ class View(object):
 
         return []
 
-    def add(self, op, result):
+    @classmethod
+    def add(cls, op, result):
         return []
 
-    def remove(self, op, result):
+    @classmethod
+    def remove(cls, op, result):
         return []
 
-    def update(self, op, result):
+    @classmethod
+    def update(cls, op, result):
         return []
 
 

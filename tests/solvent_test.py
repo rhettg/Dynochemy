@@ -134,10 +134,14 @@ class SolventViewTestCase(SolventTestCase):
             table = TestTable
             view_table = ViewTable
 
-            def add(self, entity):
-                return [operation.UpdateOperation(self.view_table, entity['value'], {'count': 1})]
-            def remove(self, entity):
-                return [operation.UpdateOperation(self.view_table, entity['value'], {'count': -1})]
+            @classmethod
+            def add(cls, op, result):
+                entity = op.entity
+                return [operation.UpdateOperation(cls.view_table, entity['value'], {'count': 1})]
+
+            @classmethod
+            def remove(cls, op, result):
+                return [operation.UpdateOperation(cls.view_table, result['value'], {'count': -1})]
 
         self.TestView = TestView
         self.db.register(TestView)

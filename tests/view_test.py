@@ -10,7 +10,8 @@ class SimpleTest(TestCase):
     @setup
     def build_view(self):
         class TestView(dynochemy.View):
-            def add(self, entity):
+            @classmethod
+            def add(cls, op, result):
                 return [turtle.Turtle()]
         self.TestView = TestView
 
@@ -28,40 +29,8 @@ class SimpleTest(TestCase):
 
         put = operation.PutOperation(self.TestTable, {'user': 'test'})
 
-        prev_ops, current_ops = v.operations_for_operation(put)
-        assert not prev_ops
+        current_ops = v.operations_for_operation(put, turtle.Turtle())
         assert current_ops
 
-class GetAndRemoveTestCase(testutil.DBTestCase):
-    @setup
-    def build_view(self):
-        class TestView(dynochemy.View):
-            def remove(self, entity):
-                # We'll just put the entity back, with a different value
-                return [operation.PutOperation(testutil.TestTable, {'key': entity['key'], 'value': None})]
-
-        self.TestView = TestView
-
-    @setup
-    def put_entity(self):
-        self.db.TestTable.put({'key': 'rhettg', 'value': 10})
-
-    def test(self):
-        v = self.TestView(self.db)
-
-        del_op = operation.DeleteOperation(testutil.TestTable, 'rhettg')
-        results = operation.OperationResult(self.db)
-
-        prev_ops, current_ops = v.operations_for_operation(del_op)
-
-        assert prev_ops
-        assert not current_ops
-
-        prev_ops[0].run(results)
-
-        assert results.next_ops
-        results.next_ops[0].run(results)
-
-        assert 'value' not in self.db.TestTable['rhettg']
 
 
