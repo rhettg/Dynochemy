@@ -317,3 +317,23 @@ class QueryOperationTestCase(OperationTestCase):
         entities = list(query_result)
         assert_equal(len(entities), 3)
 
+
+class QueryAndDeleteTestCase(OperationTestCase):
+    @setup
+    def build_entities(self):
+        self.keys = []
+        for ndx in range(4):
+            entity = {'key': 'my_key', 'range_key': ndx}
+            self.db.FullTestTable.put(entity)
+
+    @setup
+    def create_op(self):
+        self.op = operation.QueryAndDeleteOperation(FullTestTable, 'my_key', filter_func=lambda e:e['range_key'] > 1)
+        self.results = operation.OperationResult(self.db)
+
+    def test(self):
+        self.op.run(self.results)
+
+        assert_equal(len(self.results.next_ops), 2)
+        assert isinstance(self.results.next_ops[0], operation.DeleteOperation)
+        assert_gt(self.results.next_ops[0].key[1], 1)

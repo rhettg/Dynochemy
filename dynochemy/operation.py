@@ -452,6 +452,31 @@ class QueryOperation(Operation):
         return op_df
 
 
+class QueryAndDeleteOperation(QueryOperation):
+    """An operation that does a query and deletes all the results.
+
+    You can provide an additional filter function (filter_func) that will be
+    applied as a filter to all the results from the query.  If the filter
+    returns False, the entity will not be deleted.
+    """
+    def __init__(self, table, key, args=None, filter_func=None):
+        super(QueryAndDeleteOperation, self).__init__(table, key, args=args)
+        self.filter_func = filter_func
+
+    def __copy__(self):
+        op = self.__class__(self.table, self.hash_key, args=copy.copy(self.args), filter_func=self.filter_func)
+        return op
+
+    def have_result(self, op_results, op_cb, **kwargs):
+        super(QueryAndDeleteOperation, self).have_result(op_results, op_cb, **kwargs)
+
+        filter_func = self.filter_func or (lambda e: True)
+
+        query_result, new_err = op_cb.result
+        for res in filter(filter_func, query_result):
+            op_results.next_ops.append(DeleteOperation(self.table, (res[self.table.hash_key], res[self.table.range_key])))
+
+
 class OperationResultDefer(defer.Defer):
     """Special defer that is bound to a result before it's completed.
 
