@@ -54,9 +54,9 @@ class Solvent(object):
         self.add_operation(op)
         return op
 
-    def delete(self, table, key):
+    def delete(self, table, key, noindex=False):
         table_cls = classify(table)
-        op = operation.GetAndDeleteOperation(table_cls, key)
+        op = operation.GetAndDeleteOperation(table_cls, key, noindex=noindex)
         self.add_operation(op)
         return op
 
@@ -132,8 +132,9 @@ class SolventRun(object):
             # Not going to do anything with errors
             return
 
-        # This provides a hook for each operation that completes. We have the opportunity to
-        # do special stuff like interact with views based on the results of an operation.
+        if op.noindex:
+            return
+
         for view in self.db.views_by_table(op.table):
             next_ops = view.operations_for_operation(op, result)
             if next_ops:

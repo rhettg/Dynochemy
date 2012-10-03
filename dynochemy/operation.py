@@ -21,17 +21,22 @@ operation. To use an operation directly, an OperationResult object must be provi
 import functools
 import itertools
 import copy
+import logging
 
 from . import errors
 from . import defer
 from . import utils
 from . import constants
 
+log = logging.getLogger(__name__)
+
 
 class Operation(object):
     """(Abstract)Base class for all operations.
 
     """
+    def __init__(self, noindex=False):
+        self.noindex = noindex
 
     def run_defer(self, op_results):
         raise NotImplementedError
@@ -119,7 +124,8 @@ def combine_dicts(left_dict, right_dict, combiner=None):
 
 
 class UpdateOperation(Operation):
-    def __init__(self, table, key, add=None, put=None, delete=None):
+    def __init__(self, table, key, add=None, put=None, delete=None, **kwargs):
+        super(UpdateOperation, self).__init__(**kwargs)
         self.table = table
         self.key = key
         self.add = add
@@ -175,7 +181,8 @@ class BatchOperation(Operation):
     #   2. Generate follow on batches for sub-ops that didn't get included due to being over capacity
 
     __slots__ = ["ops"]
-    def __init__(self, ops=None):
+    def __init__(self, ops=None, **kwargs):
+        super(BatchOperation, self).__init__(**kwargs)
         self.ops = set()
 
         if ops:
@@ -294,7 +301,8 @@ class BatchReadOperation(BatchOperation):
 
 
 class PutOperation(Operation, _WriteBatchableMixin):
-    def __init__(self, table, entity):
+    def __init__(self, table, entity, **kwargs):
+        super(PutOperation, self).__init__(**kwargs)
         self.table = table
         self.entity = entity
 
@@ -314,7 +322,8 @@ class PutOperation(Operation, _WriteBatchableMixin):
 
 
 class DeleteOperation(Operation, _WriteBatchableMixin):
-    def __init__(self, table, key):
+    def __init__(self, table, key, **kwargs):
+        super(DeleteOperation, self).__init__(**kwargs)
         self.table = table
         self.key = key
 
@@ -334,7 +343,8 @@ class DeleteOperation(Operation, _WriteBatchableMixin):
 
 
 class GetOperation(Operation, _ReadBatchableMixin):
-    def __init__(self, table, key):
+    def __init__(self, table, key, **kwargs):
+        super(GetOperation, self).__init__(**kwargs)
         self.table = table
         self.key = key
 
@@ -382,7 +392,8 @@ class QueryOperation(Operation):
     retries. We could leave provisioning error issues to our 
     solvent, but that means we'll re-run the entire query operation, not just a segment.
     """
-    def __init__(self, table, key, args=None):
+    def __init__(self, table, key, args=None, **kwargs):
+        super(QueryOperation, self).__init__(**kwargs)
         self.table = table
         self.hash_key = key
         self.args = args or {}
@@ -459,8 +470,8 @@ class QueryAndDeleteOperation(QueryOperation):
     applied as a filter to all the results from the query.  If the filter
     returns False, the entity will not be deleted.
     """
-    def __init__(self, table, key, args=None, filter_func=None):
-        super(QueryAndDeleteOperation, self).__init__(table, key, args=args)
+    def __init__(self, table, key, filter_func=None, **kwargs):
+        super(QueryAndDeleteOperation, self).__init__(table, key, **kwargs)
         self.filter_func = filter_func
 
     def __copy__(self):
@@ -564,8 +575,11 @@ class OperationResult(object):
     def __getitem__(self, key):
         return self.results[key]
 
+    def __delitem__(self, key):
+        del self.results[key]
+
     def __repr__(self):
         return repr(self.results)
 
 
-__all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "OperationResult"]
+__all__ = ["GetOperation", "PutOperation", "DeleteOperation", "UpdateOperation", "QueryOperation", "BatchReadOperation", "BatchWriteOperation", "OperationResult"]
