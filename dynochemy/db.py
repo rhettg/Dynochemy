@@ -15,7 +15,7 @@ import collections
 from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
-from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, ExceededBatchRequestsError, parse_error
+from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, ExceededBatchRequestsError, ItemNotFoundError, parse_error
 from . import utils
 from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
@@ -654,6 +654,11 @@ class ReadBatch(Batch):
                         key = table._item_key(item)
                         request = (table_name, key)
                         self._request_defer[request].callback(entity)
+
+                # Look for any items we didn't get results for.
+                for req, df in self._request_defer.iteritems():
+                    if not df.done:
+                        self._request_defer[req].callback(None, error=ItemNotFoundError())
 
                 self._defer.callback(data, read_capacity=read_capacity)
 

@@ -22,11 +22,14 @@ class IncompleteSolventError(Error): pass
 
 class ExceededBatchRequestsError(Error): pass
 
+class ItemNotFoundError(Error): pass
+
 class DynamoDBError(Error): pass
 
 class ProvisionedThroughputError(DynamoDBError): pass
 
 class UnprocessedItemError(DynamoDBError): pass
+
 
 
 def parse_error(raw_error):
@@ -41,4 +44,4 @@ def parse_error(raw_error):
         return DynamoDBError(error_data['message'], error_data['__type'])
 
 
-__all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError", "DynamoDBError", "ProvisionedThroughputError"]
+__all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError", "DynamoDBError", "ProvisionedThroughputError", "ItemNotFoundError"]
