@@ -26,5 +26,7 @@ from .db import run_all
 from .view import View
 from .solvent import Solvent
 from .sql import SQLDB
+from .oxdb import OxDB
+from .oxdb import OxSQLDB
 from .errors import *
 from .operation import *

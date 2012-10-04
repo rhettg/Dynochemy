@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Potential SQLite backing for Dynamo. 
-This would be useful for local development
+SQLite emulation of DynamoDB
+This is useful for local development and testing.
 
 :copyright: (c) 2012 by Rhett Garber.
 :license: ISC, see LICENSE for more details.
