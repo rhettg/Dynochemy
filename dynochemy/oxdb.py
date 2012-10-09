@@ -41,7 +41,8 @@ class OxClient(object):
 
                 if 'Responses' in resp:
                     for table_name, table_resp in resp['Responses'].iteritems():
-                        ctx.set('tables.%s.consumed_capacity' % table_name, table_resp['ConsumedCapacityUnits'])
+                        if 'ConsumedCapacityUnits' in table_resp:
+                            ctx.set('tables.%s.consumed_capacity' % table_name, table_resp['ConsumedCapacityUnits'])
                 elif 'ConsumedCapacityUnits' in resp:
                     req = json.loads(body)
                     ctx.set('tables.%s.consumed_capacity' % req.get('TableName', ''), resp['ConsumedCapacityUnits'])
