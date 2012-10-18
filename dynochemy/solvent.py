@@ -197,29 +197,30 @@ class SolventRun(object):
 
     def requeue_failed_ops(self):
         has_failures = False
+        error_tables = set()
+        op_error_count = 0
 
-        # We'll only requeue failed operations a fixed number of times.
-        if self.op_results.error_attempts < MAX_ATTEMPTS:
+        # Check for errors and do some retries.
+        for op in self.op_results:
+            _, err = self.op_results[op]
 
-            error_tables = set()
-            op_error_count = 0
-            self.op_results.error_attempts += 1
+            # Certain types of errors we know we can try again just be re-executing the same operation.
+            # Other errors, or successes, we'll just record and carry on.
+            if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
+                log.debug("Provisioning error for %r on table %r", op, op.table.name)
 
-            # Check for errors and do some retries.
-            for op in self.op_results:
-                _, err = self.op_results[op]
-
-                # Certain types of errors we know we can try again just be re-executing the same operation.
-                # Other errors, or successes, we'll just record and carry on.
-                if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
-                    log.debug("Provisioning error for %r on table %r", op, op.table.name)
+                # We'll only requeue failed operations a fixed number of times.
+                if self.op_results.error_attempts < MAX_ATTEMPTS:
                     self.add_operation(op)
+                    has_failures = True
                     op_error_count += 1
                     error_tables.add(op.table.name)
-                    has_failures = True
 
-            if op_error_count:
-                log.warning("(%d) Retrying %d operations on tables %r due to provisioning limits", self.op_results.error_attempts, op_error_count, list(error_tables))
+        if has_failures:
+            self.op_results.error_attempts += 1
+            log.warning("(%d) Retrying %d operations on tables %r due to provisioning limits", self.op_results.error_attempts, op_error_count, list(error_tables))
+        else:
+            self.op_results.error_attempts = 0
 
         return has_failures
 
