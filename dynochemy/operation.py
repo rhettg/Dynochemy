@@ -161,6 +161,9 @@ class UpdateOperation(Operation):
     def unique_key(self):
         return ('UPDATE', self.table.name, self.key)
 
+    def __repr__(self):
+        return "<UpdateOperation %s:%r>" % (self.table.name, self.key,)
+
 
 class _WriteBatchableMixin(object):
     """Mixing for operations that can be put in a batch write"""
@@ -254,6 +257,9 @@ class BatchWriteOperation(BatchOperation):
 
         return batch_df
 
+    def __repr__(self):
+        return "<BatchWriteOperation:%d>" % (len(self),)
+
 
 class BatchReadOperation(BatchOperation):
     def add(self, op):
@@ -299,6 +305,9 @@ class BatchReadOperation(BatchOperation):
 
         return batch_df
 
+    def __repr__(self):
+        return "<BatchReadOperation:%d>" % (len(self),)
+
 
 class PutOperation(Operation, _WriteBatchableMixin):
     def __init__(self, table, entity, **kwargs):
@@ -316,9 +325,15 @@ class PutOperation(Operation, _WriteBatchableMixin):
         return getattr(batch, self.table.__name__).put(self.entity)
 
     @property
+    def key(self):
+        return tuple([self.entity[k] for k in self.table(None).key_spec])
+
+    @property
     def unique_key(self):
-        key = tuple([self.entity[k] for k in self.table(None).key_spec])
-        return ('PUT', self.table.name, key)
+        return ('PUT', self.table.name, self.key)
+
+    def __repr__(self):
+        return "<PutOperation %s:%r>" % (self.table.name, self.key,)
 
 
 class DeleteOperation(Operation, _WriteBatchableMixin):
@@ -341,6 +356,9 @@ class DeleteOperation(Operation, _WriteBatchableMixin):
         # Assumes updates for the same key have been combined together
         return ('DELETE', self.table.name, self.key)
 
+    def __repr__(self):
+        return "<DeleteOperation %s:%r>" % (self.table.name, self.key,)
+
 
 class GetOperation(Operation, _ReadBatchableMixin):
     def __init__(self, table, key, **kwargs):
@@ -362,6 +380,9 @@ class GetOperation(Operation, _ReadBatchableMixin):
         # Assumes updates for the same key have been combined together
         return ('GET', self.table.name, self.key)
 
+    def __repr__(self):
+        return "<GetOperation %s:%r>" % (self.table.name, self.key,)
+
 
 class GetAndDeleteOperation(GetOperation):
     """Operation that does a Get, then a Delete
@@ -375,6 +396,9 @@ class GetAndDeleteOperation(GetOperation):
         entity, err = op_results[self]
         if not err:
             op_results.next_ops.append(DeleteOperation(self.table, self.key))
+
+    def __repr__(self):
+        return "<GetAndDeleteOperation %s:%r>" % (self.table.name, self.key,)
 
 
 class QueryOperation(Operation):
@@ -462,6 +486,9 @@ class QueryOperation(Operation):
         op_df.add_callback(functools.partial(self.have_result, op_results))
         return op_df
 
+    def __repr__(self):
+        return "<QueryOperation %s:%r>" % (self.table.name, self.hash_key,)
+
 
 class QueryAndDeleteOperation(QueryOperation):
     """An operation that does a query and deletes all the results.
@@ -486,6 +513,9 @@ class QueryAndDeleteOperation(QueryOperation):
         query_result, new_err = op_cb.result
         for res in filter(filter_func, query_result):
             op_results.next_ops.append(DeleteOperation(self.table, (res[self.table.hash_key], res[self.table.range_key])))
+
+    def __repr__(self):
+        return "<QueryAndDeleteOperation %s:%r>" % (self.table.name, self.hash_key,)
 
 
 class OperationResultDefer(defer.Defer):

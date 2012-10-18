@@ -183,7 +183,7 @@ class SolventRun(object):
             has_failed_ops = self.requeue_failed_ops()
             if has_failed_ops:
                 delay_secs = 0.8 * self.op_results.error_attempts
-                log.debug("Trying again in %.1f seconds", delay_secs)
+                log.info("Op failures, trying again in %.1f seconds", delay_secs)
 
                 db = self.op_results.db
                 if db.ioloop:
@@ -201,6 +201,8 @@ class SolventRun(object):
         # We'll only requeue failed operations a fixed number of times.
         if self.op_results.error_attempts < MAX_ATTEMPTS:
 
+            error_tables = set()
+            op_error_count = 0
             self.op_results.error_attempts += 1
 
             # Check for errors and do some retries.
@@ -212,7 +214,12 @@ class SolventRun(object):
                 if isinstance(err, (errors.ProvisionedThroughputError, errors.UnprocessedItemError)):
                     log.debug("Provisioning error for %r on table %r", op, op.table.name)
                     self.add_operation(op)
+                    op_error_count += 1
+                    error_tables.add(op.table.name)
                     has_failures = True
+
+            if op_error_count:
+                log.warning("(%d) Retrying %d operations on tables %r due to provisioning limits", self.op_results.error_attempts, op_error_count, list(error_tables))
 
         return has_failures
 
