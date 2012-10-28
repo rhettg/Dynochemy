@@ -37,11 +37,10 @@ def parse_error(raw_error):
     if isinstance(raw_error, Error):
         return raw_error
 
-    error_data = json.loads(raw_error.data)
-    if 'ProvisionedThroughputExceededException' in error_data['__type']:
-        return ProvisionedThroughputError(error_data['message'])
+    if 'ProvisionedThroughputExceededException' in raw_error.error_code:
+        return ProvisionedThroughputError(raw_error.error_message)
     else:
-        return DynamoDBError(error_data['message'], error_data['__type'])
+        return DynamoDBError(raw_error.error_message, raw_error.error_code)
 
 
 __all__ = ["Error", "SyncUnallowedError", "DuplicateBatchItemError", "DynamoDBError", "ProvisionedThroughputError", "ItemNotFoundError"]
