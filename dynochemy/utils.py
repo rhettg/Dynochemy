@@ -73,7 +73,16 @@ def parse_key(key):
 
 EMPTY_VALUES = ['', None, [], set(), tuple()]
 def format_item(item):
-    return dict((k, format_value(v)) for k, v in item.iteritems() if v not in EMPTY_VALUES)
+    try:
+        out = {}
+        for k, v in item.iteritems():
+            if v in EMPTY_VALUES:
+                continue
+            out[k] = format_value(v)
+    except (TypeError, ValueError), e:
+        log.error("Failed to format value for %s", k)
+        raise
+    return out
 
 def parse_value(value_spec):
     key, value = value_spec.items()[0]

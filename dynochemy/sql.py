@@ -232,8 +232,13 @@ class SQLClient(object):
         for attribute, value_update in args['AttributeUpdates'].iteritems():
             if value_update['Action'] == "ADD":
                 if attribute in real_item:
-                    if isinstance(real_item[attribute], (int,float)):
+                    if isinstance(real_item[attribute], (int,float,list)):
                         real_item[attribute] += utils.parse_value(value_update['Value'])
+                    elif isinstance(real_item[attribute], list):
+                        if hasattr(value_update['Value'], '__iter__'):
+                            real_item[attribute] += [utils.parse_value(v) for v in value_update['Value']]
+                        else:
+                            real_item[attribute].append(utils.parse_value(value_update['Value']))
                     else:
                         real_item[attribute].append(utils.parse_value(value_update['Value']))
                 else:
