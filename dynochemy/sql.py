@@ -434,16 +434,16 @@ class SQLClient(object):
         # Record and check our provisioning limits
         if 'TableName' in args:
             if command in ('GetItem', 'BatchGetItem') and not self.tables[args['TableName']]['read_counter'].check():
-                return callback(None, error=errors.ProvisionedThroughputError())
+                return callback({}, error=errors.ProvisionedThroughputError())
 
             if command in ('PutItem', 'BatchWriteItem', 'DeleteItem', 'UpdateItem') and not self.tables[args['TableName']]['write_counter'].check():
-                return callback(None, error=errors.ProvisionedThroughputError())
+                return callback({}, error=errors.ProvisionedThroughputError())
 
         result = None
         try:
             result = getattr(self, "do_%s" % command.lower())(args)
         except CommandError, e:
-            callback(None, error=e.args[0])
+            callback({}, error=e.args[0])
             return
         else:
             if result is None:
