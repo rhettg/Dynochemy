@@ -468,7 +468,7 @@ class QueryOperation(Operation):
         else:
             super(QueryOperation, self).have_result(op_results, op_cb)
 
-        if new_query_result.has_next:
+        if new_query_result and new_query_result.has_next:
             last_key = utils.parse_key(new_query_result.result_data['LastEvaluatedKey'])
             next_op = copy.copy(self)
             next_op.last_seen(last_key[1])
