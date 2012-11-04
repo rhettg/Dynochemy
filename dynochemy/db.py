@@ -558,7 +558,10 @@ class WriteBatch(Batch):
                             if 'Item' in req:
                                 key = table._item_key(req['Item'])
                             else:
-                                key = table._key_key(req['Key'])
+                                if table.has_range:
+                                    key = table._key_key(req['Key'])
+                                else:
+                                    key = table._key_key(req['Key'])[0]
 
                             request = (table_name, req_type, key)
 
