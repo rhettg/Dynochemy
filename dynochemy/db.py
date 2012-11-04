@@ -553,7 +553,13 @@ class WriteBatch(Batch):
                         table = self.db.table_by_name(table_name)
                         for item in items:
                             (req_type, req), = item.items()
-                            key = table._item_key(req['Item'])
+
+                            # Responses may be items or keys depending on the type of request
+                            if 'Item' in req:
+                                key = table._item_key(req['Item'])
+                            else:
+                                key = table._key_key(req['Key'])
+
                             request = (table_name, req_type, key)
 
                             if request not in self._request_data:
