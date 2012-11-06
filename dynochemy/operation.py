@@ -420,10 +420,12 @@ class QueryOperation(Operation):
         super(QueryOperation, self).__init__(**kwargs)
         self.table = table
         self.hash_key = key
+        self.total_limit = None
         self.args = args or {}
 
     def __copy__(self):
         op = self.__class__(self.table, self.hash_key, args=copy.copy(self.args))
+        op.total_limit = self.total_limit
         return op
 
     def range(self, start=None, end=None):
@@ -435,7 +437,8 @@ class QueryOperation(Operation):
         return self
 
     def limit(self, limit):
-        self.args['limit'] = limit
+        self.total_limit = int(limit)
+        self.args['limit'] = int(limit)
         return self
 
     def last_seen(self, range_id):
@@ -446,7 +449,7 @@ class QueryOperation(Operation):
     def unique_key(self):
         # We are not including the 'last_seen' argument in our hash because we
         # want all the different segments of our query to combine together.
-        return ('QUERY', self.table.name, self.hash_key, tuple((k, v) for k, v in self.args.iteritems() if k != 'last_seen'))
+        return ('QUERY', self.table.name, self.hash_key, tuple((k, v) for k, v in self.args.iteritems() if k not in ('last_seen', 'limit')), self.total_limit)
 
     def have_result(self, op_results, op_cb, **kwargs):
         # Query result handling is special.
@@ -458,6 +461,10 @@ class QueryOperation(Operation):
         if self in op_results:
             # We already have part of this query, update our results in place.
             query_result, err = op_results[self]
+
+            # If the last query failed, we shouldn't even be here.
+            assert query_result, "Last query didn't have a result: %r" % err
+
             if new_err:
                 # Mark us as an error
                 op_results.record_result(self, (query_result, new_err))
@@ -468,11 +475,27 @@ class QueryOperation(Operation):
         else:
             super(QueryOperation, self).have_result(op_results, op_cb)
 
-        if new_query_result and new_query_result.has_next:
-            last_key = utils.parse_key(new_query_result.result_data['LastEvaluatedKey'])
-            next_op = copy.copy(self)
-            next_op.last_seen(last_key[1])
-            op_results.next_ops.append(next_op)
+        if self.total_limit:
+            assert len(op_results[self][0]) <= self.total_limit
+
+        if new_err:
+            return
+        elif new_query_result:
+            # What do we do next? If we've met our limit, we should stop.
+            # Otherwise we might need to queue up the next page of results.
+            current_count = len(new_query_result)
+            if self.args.get('limit') and current_count >= int(self.args['limit']):
+                    return
+            elif new_query_result.has_next:
+                last_key = utils.parse_key(new_query_result.result_data['LastEvaluatedKey'])
+                next_op = copy.copy(self)
+                next_op.last_seen(last_key[1])
+
+                if self.args.get('limit'):
+                    next_op.args['limit'] = self.args['limit'] - current_count
+                    assert next_op.args['limit'] > 0
+
+                op_results.next_ops.append(next_op)
 
     def run_defer(self, op_results):
         query = getattr(op_results.db, self.table.__name__).query(self.hash_key)
