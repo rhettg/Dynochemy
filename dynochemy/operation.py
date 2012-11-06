@@ -485,7 +485,7 @@ class QueryOperation(Operation):
             # Otherwise we might need to queue up the next page of results.
             current_count = len(new_query_result)
             if self.args.get('limit') and current_count >= int(self.args['limit']):
-                    return
+                return
             elif new_query_result.has_next:
                 last_key = utils.parse_key(new_query_result.result_data['LastEvaluatedKey'])
                 next_op = copy.copy(self)
