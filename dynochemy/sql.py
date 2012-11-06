@@ -419,7 +419,8 @@ class SQLClient(object):
                 out['Items'].append(item_data)
 
             out['Count'] += 1
-            out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
+            if len(key_spec) > 1:
+                out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
         else:
             # If we didn't break out of our loop, that means we're on the last page of our result set and should have a key
 
