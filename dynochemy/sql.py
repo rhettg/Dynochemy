@@ -390,9 +390,11 @@ class SQLClient(object):
         q = sql.select([sql_table], expr)
 
         if 'Limit' in args:
-            q = q.limit(args['Limit'])
+            limit = min(DEFAULT_LIMIT, args['Limit'])
         else:
-            q = q.limit(DEFAULT_LIMIT + 1)
+            limit = DEFAULT_LIMIT
+
+        q = q.limit(limit + 1)
 
         if len(key_spec) > 1:
             if scan_forward:
@@ -403,6 +405,9 @@ class SQLClient(object):
         capacity_size = 0
         out = {'Items': [], 'Count': 0}
         for res in self.engine.execute(q):
+            if out['Count'] == limit:
+                break
+
             capacity_size += (len(res[sql_table.c.content]) / 1024) + 1
 
             item_data = json.loads(res[sql_table.c.content])
@@ -414,11 +419,14 @@ class SQLClient(object):
                 out['Items'].append(item_data)
 
             out['Count'] += 1
+            out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
+        else:
+            # If we didn't break out of our loop, that means we're on the last page of our result set and should have a key
 
-            # If we reach the limit our system allows us to return, we'll quit and inform the caller how to continue.
-            if out['Count'] == DEFAULT_LIMIT:
-                out['LastEvaluatedKey'] = utils.format_item({'HashKeyElement': res[sql_table.c.hash_key], 'RangeKeyElement': res[sql_table.c.range_key]})
-                break
+            # The docs say the last evaulated key should be 'null', but I'm suspicious that isn't the case.
+            #out['LastEvaluatedKey'] = None
+            del out['LastEvaluatedKey']
+            
 
         self.table_read_op_capacity[args['TableName']] += capacity_size
         self.tables[args['TableName']]['read_counter'].record(capacity_size)
