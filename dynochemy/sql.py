@@ -424,8 +424,9 @@ class SQLClient(object):
             # If we didn't break out of our loop, that means we're on the last page of our result set and should have a key
 
             # The docs say the last evaulated key should be 'null', but I'm suspicious that isn't the case.
-            #out['LastEvaluatedKey'] = None
-            del out['LastEvaluatedKey']
+            if 'LastEvaluatedKey' in out:
+                #out['LastEvaluatedKey'] = None
+                del out['LastEvaluatedKey']
             
 
         self.table_read_op_capacity[args['TableName']] += capacity_size
