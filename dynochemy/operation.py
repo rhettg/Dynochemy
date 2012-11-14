@@ -458,12 +458,9 @@ class QueryOperation(Operation):
         # Also, we might need to queue up our operation again with different bounds if there are more results available.
         new_query_result, new_err = op_cb.result
 
-        if self in op_results:
+        if self in op_results and op_results[self][0]:
             # We already have part of this query, update our results in place.
             query_result, err = op_results[self]
-
-            # If the last query failed, we shouldn't even be here.
-            assert query_result, "Last query didn't have a result: %r" % err
 
             if new_err:
                 # Mark us as an error
