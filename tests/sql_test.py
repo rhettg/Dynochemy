@@ -59,7 +59,7 @@ class WriteCapacityTestCase(TestCase):
 class UpdateCollisionTestCase(TestCase):
     @setup
     def build_db(self):
-        engine = sqlalchemy.create_engine("sqlite://", echo=True)
+        engine = sqlalchemy.create_engine("sqlite://")
         self.db = sql.SQLDB(engine)
         self.db.register(TestTable)
 
