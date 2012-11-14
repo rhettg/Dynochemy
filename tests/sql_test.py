@@ -54,3 +54,23 @@ class WriteCapacityTestCase(TestCase):
             pass
         else:
             assert False, "Failed to throw exception"
+
+
+class UpdateCollisionTestCase(TestCase):
+    @setup
+    def build_db(self):
+        engine = sqlalchemy.create_engine("sqlite://", echo=True)
+        self.db = sql.SQLDB(engine)
+        self.db.register(TestTable)
+
+    @setup
+    def build_entity(self):
+        self.entity = {'key': 'hello', 'count': 0}
+        self.db.TestTable.put(self.entity)
+
+    def test(self):
+        self.db.TestTable.update('hello', add={'count': 1}, put={'name': 'alice'})
+
+        entity = self.db.TestTable.get('hello')
+        assert_equal(entity['count'], 1)
+        assert_equal(entity['name'], 'alice')

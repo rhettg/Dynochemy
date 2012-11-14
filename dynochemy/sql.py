@@ -52,6 +52,7 @@ def compare(operator, lval, rval):
 class SQLClient(object):
     def __init__(self, engine):
         self.engine = engine
+        self.connection = None
 
         self.tables = {}
         self.metadata = sqlalchemy.MetaData(bind=engine)
@@ -150,12 +151,22 @@ class SQLClient(object):
             del_q = sql_table.delete().where(sql_table.c.hash_key==hash_key)
             ins = sql_table.insert().values(hash_key=hash_key, content=item_json)
 
+        cnxn = self.connection or self.engine
+
         try:
-            self.engine.execute(ins)
+            cnxn.execute(ins)
         except sqlalchemy.exc.IntegrityError:
             # Try again
-            self.engine.execute(del_q)
-            self.engine.execute(ins)
+            txn = None
+            if cnxn == self.engine:
+                cnxn = self.engine.connect()
+                txn = cnxn.begin()
+
+            cnxn.execute(del_q)
+            cnxn.execute(ins)
+
+            if txn:
+                txn.commit()
         
         return capacity_size
 
@@ -218,8 +229,15 @@ class SQLClient(object):
             key = (utils.parse_value(args['Key']['HashKeyElement']),)
             expr = sql_table.c.hash_key == key[0]
 
+        # Update is one of our few transactionally important operations.  By
+        # setting self.connection, our callees should use that rather than the
+        # connectionless self.engine method, allowing us to control the
+        # transaction directly.
+        self.connection = self.engine.connect()
+        txn = self.connection.begin()
+
         q = sql.select([sql_table], expr)
-        res = list(self.engine.execute(q))
+        res = list(self.connection.execute(q))
         if res:
             item = json.loads(res[0][sql_table.c.content])
         else:
@@ -254,6 +272,9 @@ class SQLClient(object):
         
         # write to the db
         self._put_item(args['TableName'], utils.format_item(real_item))
+
+        txn.commit()
+        self.connection = None
 
         if args.get('ReturnValues', 'NONE') == 'NONE':
             return {}
