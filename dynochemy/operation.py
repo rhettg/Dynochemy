@@ -476,7 +476,10 @@ class QueryOperation(Operation):
             super(QueryOperation, self).have_result(op_results, op_cb)
 
         if self.total_limit:
-            assert len(op_results[self][0]) <= self.total_limit
+            # Let's make sure we never return more entities than our limit
+            full_res, err = op_results[self]
+            if full_res:
+                assert len(full_res) <= self.total_limit
 
         if new_err:
             return
