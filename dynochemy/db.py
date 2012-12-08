@@ -12,7 +12,6 @@ import logging
 import pprint
 import collections
 
-from tornado.ioloop import IOLoop
 from asyncdynamo import asyncdynamo
 
 from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, ExceededBatchRequestsError, ItemNotFoundError, parse_error
@@ -21,6 +20,7 @@ from .defer import ResultErrorTupleDefer
 from .defer import ResultErrorKWDefer
 from . import view
 from . import constants
+from . import utils
 
 
 log = logging.getLogger(__name__)
@@ -70,8 +70,9 @@ class DB(BaseDB):
         super(DB, self).__init__()
 
         self.allow_sync = bool(ioloop is None)
-        self.ioloop = ioloop or IOLoop()
+        self.ioloop = ioloop or utils.patch_io_loop()()
         self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
+        utils.patch_http_client(self.client.http_client)
 
 
 class Table(object):

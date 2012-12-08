@@ -14,6 +14,11 @@ especially for things like formatting datastructures for Dynamo.
 import time
 import logging
 import itertools
+import types
+import contextlib
+
+from tornado.httpclient import HTTPResponse
+from tornado.ioloop import IOLoop
 
 log = logging.getLogger(__name__)
 
@@ -197,3 +202,55 @@ def predict_capacity_usage(request_type, args, result=None):
             return 25.0
     else:
         raise ValueError(request_type)
+
+
+def patch_io_loop():
+    """Create an IOLoop sub-class
+
+    We have out own io loop subclass that handles unhandled exceptions by
+    re-raising them and quitting.  This is useful for io loops used in contexts
+    that are not multi-user... for example dynochemy uses its own ioloops for
+    parallelizing io operations, in which case an exception would be better off
+    just raised out of ioloop.start()
+
+    This is a function that generates a class because newwer version of tornado
+    has some dynamic IOLoop sub-class selection mechanism based on platform. So
+    we can just statically subclass 'IOLoop'.
+    """
+    if hasattr(IOLoop, 'configurable_default'):
+        base_cls = IOLoop.configurable_default()
+    else:
+        base_cls = IOLoop
+
+    class StrictExceptionIOLoop(base_cls):
+        def handle_callback_exception(self, callback):
+            raise
+
+    return StrictExceptionIOLoop
+
+def patch_http_client(client):
+    """Patch a simple_httpclient instance to raise exceptions generated in callbacks.
+
+    See https://github.com/facebook/tornado/pull/652
+    """
+    @contextlib.contextmanager
+    def better_cleanup(self):
+        try:
+            yield
+        except Exception, e:
+            if self.final_callback:
+                self._run_callback(HTTPResponse(self.request, 599, error=e,
+                                   request_time=self.io_loop.time() - self.start_time,
+                                ))
+
+                if hasattr(self, "stream"):
+                    self.stream.close()
+            else:
+                # If our callback has already been called, we are probably
+                # catching an exception that is not caused by us but rather
+                # some child of our callback. Rather than drop it on the floor,
+                # pass it along.
+                raise
+
+    client.cleanup = types.MethodType(better_cleanup, client)
+
