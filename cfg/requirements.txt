@@ -1,7 +1,7 @@
 testify
 pep8
 pyflakes
-boto==2.2.1
+boto==2.6.0
 #-e /Users/rhettg/Projects/asyncdynamo
 git+git://github.com/rhettg/asyncdynamo.git#egg=asyncdynamo
 ipython
