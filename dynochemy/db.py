@@ -71,8 +71,12 @@ class DB(BaseDB):
 
         self.allow_sync = bool(ioloop is None)
         self.ioloop = ioloop or utils.patch_io_loop()()
+
+        # This will monkey patch the _HTTPConnection class in tornado
+        # Eventually when the real patch is released, we should do some sort of version check.
+        utils.patch_http_client()
+
         self.client = asyncdynamo.AsyncDynamoDB(access_key, access_secret, ioloop=self.ioloop)
-        utils.patch_http_client(self.client.http_client)
 
 
 class Table(object):

@@ -17,6 +17,7 @@ import itertools
 import types
 import contextlib
 
+from tornado.simple_httpclient import _HTTPConnection
 from tornado.httpclient import HTTPResponse
 from tornado.ioloop import IOLoop
 
@@ -228,7 +229,7 @@ def patch_io_loop():
 
     return StrictExceptionIOLoop
 
-def patch_http_client(client):
+def patch_http_client():
     """Patch a simple_httpclient instance to raise exceptions generated in callbacks.
 
     See https://github.com/facebook/tornado/pull/652
@@ -252,5 +253,5 @@ def patch_http_client(client):
                 # pass it along.
                 raise
 
-    client.cleanup = types.MethodType(better_cleanup, client)
+    _HTTPConnection.cleanup = types.UnboundMethodType(better_cleanup, None, _HTTPConnection)
 
