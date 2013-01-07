@@ -241,7 +241,7 @@ def patch_http_client():
         except Exception, e:
             if self.final_callback:
                 self._run_callback(HTTPResponse(self.request, 599, error=e,
-                                   request_time=self.io_loop.time() - self.start_time,
+                                   request_time=time.time() - self.start_time,
                                 ))
 
                 if hasattr(self, "stream"):
