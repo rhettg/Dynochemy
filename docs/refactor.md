@@ -41,25 +41,38 @@ Additonaly, our SolventResult object will allow access of results both by operat
 
 Usage can then look:
 
-    s = self.solvent()
-    s.EntityTable[key]
-    s.EntityTable[key_2] = {'blah'}
-    result = yield tornado.gen.Task(s.run_async)
+    try:
+        entity = yield tornado.gen.YieldFuture(self.solvent().EntityTable.get(key))
+    except dynochemy.ItemNotFoundError, e:
+        entity = None
 
-    print result[0]
-    {'entity': ...}
+    yield tornado.gen.YieldFuture(self.solvent().EntityTable.put({..})
+
+    query_results = yield tornado.gen.YieldFuture(self.solvent().EntityTable.query(..))
+    for result in query_results:
+        pass
 
 or
 
-    s = self.solvent()
-    get_op = s.get(EntityTable, key)
-    result = yield tornado.gen.Task(s.run_async)
+    with self.solvent().begin() as s:
+        for key in keys:
+            entities_f.append(s.EntityTable.get(key))
 
-    try:
-        entity = result[get_op]
-    except KeyError:
-        print "Entity not found"
+    entities = yield [tornado.gen.YieldFuture(entity_f) for entity_f in entities_f]
 
+In sync mode (non-tornado), we still use futures, but you can just do the following:
+
+    entity = self.solvent().EntityTable.get(key).result()
+
+    with self.solvent().begin() as s:
+        for key in keys:
+            entities_f.append(s.EntityTable.get(key))
+
+    entities = [entity_f.result() for entity_f in entities_f]
+
+Or even the shortcut key index:
+
+    entity = self.solvent().EntityTable[key]
 
 Architecture Overview
 ----
@@ -72,7 +85,9 @@ A solvent generates lists of operations to 'played' against data stores.
 
 A solvent can also introspect the underlying tables to understand their resource usage.
 
-A solvent return a SolventResult object that contains all the results from
+A solvent operation call returns a 'Future'.
+
+When run, a solvent return a SolventResult object that contains all the results from
 executing a solvent. This object can, by key lookups, return the results of any
 operation played. If an operation failed, or an exception was generated, the
 OperationResult will emit that exception when the result is asked for.
