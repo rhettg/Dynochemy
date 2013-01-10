@@ -1,0 +1,78 @@
+Big Refactor / Redesign
+====
+
+Previously, there were 3 ways to use the library: 
+
+  * Direct db calls, (dyndb.EntityTable.get(key))
+  * Operation (operation.GetOperation(table, key).run(self.dyndb))
+  * Solvent (solvent.get(dyndb.EntityTable, key), solvent.run(self.dyndb))
+
+These are not mutually exclusive, but build on each other. However there is
+some complexity there because I didn't really see how it was going to be used
+until now. 
+
+We primarily have to use the Solvent method now because you really have to have
+the retry/capacity logic of a Solvent.
+
+Also, I was unaware of the existance of 'concurrent.futures', part of python3
+that is backported (via pypi) to 2.x. This is effectivly 'defer'. Error
+handling needs to be redesigned anyway, and I like futures better. Actually,
+it's remarkable how similiar defer is to future, but I guess both were inspired
+by Twisted. Where I differed, I think I was wrong.
+
+
+Modern Usage
+----
+
+Globally, we should create a 'Solvent Maker' (similiar to a sqlaqlchemy session maker). When a solvent is generated, it is 
+associated with a real Database implementation. In the future, you could associate it with multiple databases and caching layers.
+
+Operations generated during a solvent would then be 'played' against all the backing layers. If the layers are like:
+
+    layers = [cache1, database1, database2]
+
+(with database2 essentially being a replicated database)
+
+Reads are done left to right (so the first read to succeed is done)
+
+Writes are done right to left (writes are done to each layer)
+
+Additonaly, our SolventResult object will allow access of results both by operation key, and by sequence.
+
+Usage can then look:
+
+    s = self.solvent()
+    s.EntityTable[key]
+    s.EntityTable[key_2] = {'blah'}
+    result = yield tornado.gen.Task(s.run_async)
+
+    print result[0]
+    {'entity': ...}
+
+or
+
+    s = self.solvent()
+    get_op = s.get(EntityTable, key)
+    result = yield tornado.gen.Task(s.run_async)
+
+    try:
+        entity = result[get_op]
+    except KeyError:
+        print "Entity not found"
+
+
+Architecture Overview
+----
+
+A solvent is the main coordinator dealing with retries and capacity. It is our
+primary interface and should have the nicest api.
+
+
+A solvent generates lists of operations to 'played' against data stores.
+
+A solvent can also introspect the underlying tables to understand their resource usage.
+
+A solvent return a SolventResult object that contains all the results from
+executing a solvent. This object can, by key lookups, return the results of any
+operation played. If an operation failed, or an exception was generated, the
+OperationResult will emit that exception when the result is asked for.
