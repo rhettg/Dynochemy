@@ -89,10 +89,10 @@ class Operation(object):
         This gives an operation the chance to intercept the processing of results, and potentially queue 'next operations'.
         """
         if ignore_capacity:
-            op_results.record_result(self, op_cb.result)
+            op_results.record_result(self, op_cb)
         else:
             op_results.record_result(self, 
-                             op_cb.result, 
+                             op_cb, 
                              read_capacity=op_cb.kwargs.get('read_capacity'), 
                              write_capacity=op_cb.kwargs.get('write_capacity'))
 
@@ -491,19 +491,28 @@ class QueryOperation(Operation):
         # Queries can happen in multiple operations.
         # We need to potentially update our resulting QueryResult object with new entries in place.
         # Also, we might need to queue up our operation again with different bounds if there are more results available.
-        new_query_result, new_err = op_cb.result
 
-        if self in op_results and op_results[self][0]:
+
+        # HEREIAM: Difficult with error handling with these new defers. We seem to record a failure in a multi-step query by keeping
+        # the old result object, but updating with a new error. Later on, when checking for errors to retry, we ignore the results, just 
+        # looking for errors.
+
+        try:
+            new_query_result = op_cb.result
+            new_err = None
+        except Exception, e:
+            new_err = e
+
+        if self in op_results and op_results.results[self].args:
             # We already have part of this query, update our results in place.
-            query_result, err = op_results[self]
+            old_query_result = op_results.raw_result(self)
 
             if new_err:
                 # Mark us as an error
-                op_results.record_result(self, (query_result, new_err))
+                op_results.set_raw_error(self, new_err)
             else:
-                op_results.record_result(self, 
-                                         (query_result.combine(new_query_result), new_err), 
-                                         read_capacity=op_cb.kwargs.get('read_capacity'))
+                op_results.set_raw_result(self, old_query_result.combine(new_query_result))
+                op_results.update_read_capacity(op_cb.kwargs.get('read_capacity'))
         else:
             super(QueryOperation, self).have_result(op_results, op_cb)
 
@@ -584,17 +593,15 @@ class OperationResultDefer(defer.Defer):
     def __init__(self, op_result, io_loop):
         super(OperationResultDefer, self).__init__(io_loop)
         self.op_result = op_result
-        self.error = None
 
-    def callback(self, err):
-        if err:
-            self.error = err
-
-        super(OperationResultDefer, self).callback(None)
-        
     @property
     def result(self):
-        return self.op_result, self.error
+        # Just a sanity check, there shouldn't be any real results
+        args, kwargs = super(OperationResultDefer, self).result
+        assert not args, args
+        assert not kwargs, kwargs
+
+        return self.op_result
 
 
 class OperationResult(object):
@@ -609,8 +616,8 @@ class OperationResult(object):
         self.next_ops = []
         self.error_attempts = 0
 
-    def record_result(self, op, result, read_capacity=None, write_capacity=None):
-        self.results[op] = result
+    def record_result(self, op, df, read_capacity=None, write_capacity=None):
+        self.results[op] = df
 
         if read_capacity:
             self.update_read_capacity(read_capacity)
@@ -622,10 +629,8 @@ class OperationResult(object):
         [func(op) for func in self.callbacks]
 
     def rethrow(self):
-        for op, (_, err) in self.iteritems():
-            if err:
-                log.info("Failed Operation %r: %r", op, err)
-                raise err
+        for df in self.results.values():
+            df.rethrow()
 
     def add_callback(self, func):
         """Add a function to call when we get a result.
@@ -654,14 +659,29 @@ class OperationResult(object):
             self.write_capacity.setdefault(name, 0.0)
             self.write_capacity[name] += value
 
+    # These are some rarely need methods to poke at the underlying operation df.
+    def set_raw_result(self, op, result):
+        self.results[op].args = [result]
+
+    def raw_result(self, op):
+        return self.results[op].args[0]
+
+    def set_raw_error(self, op, ex):
+        self.results[op].exception(ex=ex)
+
+    def raw_error(self, op):
+        return self.results[op].error
+
     def iteritems(self):
-        return self.results.iteritems()
+        for op, df in self.results.iteritems():
+            yield (op, df.result)
 
     def __iter__(self):
-        return iter(self.results)
+        for op in self.results.keys():
+            yield op
 
     def __getitem__(self, key):
-        return self.results[key]
+        return self.results[key].result
 
     def __delitem__(self, key):
         del self.results[key]

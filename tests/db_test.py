@@ -105,9 +105,10 @@ class SimpleBatchTest(TestCase):
         assert d.done
         for df in item_dfs:
             assert df.done
-            assert df.result[1]
+            assert df.error
 
         assert_equal(len(batch.errors), 1)
+
 
 class BatchSyncFailTest(TestCase):
     @setup

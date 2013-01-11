@@ -157,7 +157,7 @@ class SolventRun(object):
 
         if not next_ops:
             # All done, no more operations to complete
-            self.defer.callback(None)
+            self.defer.callback()
             return
 
         for op in OperationSet(next_ops).ops:
@@ -202,7 +202,7 @@ class SolventRun(object):
 
         # Check for errors and do some retries.
         for op in self.op_results:
-            _, err = self.op_results[op]
+            err = self.op_results.raw_error(op)
 
             # Certain types of errors we know we can try again just be re-executing the same operation.
             # Other errors, or successes, we'll just record and carry on.

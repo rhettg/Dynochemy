@@ -16,8 +16,7 @@ from asyncdynamo import asyncdynamo
 
 from .errors import Error, SyncUnallowedError, DuplicateBatchItemError, UnprocessedItemError, ExceededBatchRequestsError, ItemNotFoundError, parse_error
 from . import utils
-from .defer import ResultErrorTupleDefer
-from .defer import ResultErrorKWDefer
+from .defer import Defer
 from . import view
 from . import constants
 from . import utils
@@ -107,7 +106,7 @@ class Table(object):
         log.debug("%.1f write capacity units consumed", value)
         self.write_counter.record(value)
 
-    def _get(self, key, attributes=None, consistent=True, callback=None):
+    def _get(self, key, attributes=None, consistent=True):
         data = {
                 'TableName': self.name,
                }
@@ -122,14 +121,12 @@ class Table(object):
 
         data['ConsistentRead'] = consistent
 
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(self.db.ioloop)
-            callback = defer.callback
+        defer = Defer(self.db.ioloop)
 
         def handle_result(data, error=None):
             if error is not None:
-                return callback(None, parse_error(error))
+                defer.exception(ex=parse_error(error))
+                return
 
             read_capacity = {self.name: 0.0}
             if 'ConsumedCapacityUnits' in data:
@@ -137,15 +134,20 @@ class Table(object):
                 self._record_read_capacity(read_capacity[self.name])
 
             if 'Item' in data:
-                callback(utils.parse_item(data['Item']), None, read_capacity=read_capacity)
+                defer.callback(utils.parse_item(data['Item']), read_capacity=read_capacity)
             else:
-                callback(None, None)
+                defer.callback(None)
 
         self.db.client.make_request('GetItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def get_async(self, key, callback, attributes=None, consistent=True):
-        self._get(key, attributes=attributes, consistent=consistent, callback=callback)
+        df = self._get(key, attributes=attributes, consistent=consistent)
+
+        def handle_result(get_df):
+            callback(get_df.result)
+
+        df.add_callback(handle_result)
 
     def get_defer(self, key, attributes=None, consistent=True):
         return self._get(key, attributes=attributes, consistent=consistent)
@@ -167,7 +169,7 @@ class Table(object):
 
     get = __getitem__
 
-    def _put(self, value, callback=None):
+    def _put(self, value):
         data = {
                 'TableName': self.name,
                }
@@ -175,27 +177,29 @@ class Table(object):
         item = utils.format_item(value)
         data['Item'] = item
 
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(self.db.ioloop)
-            callback = defer.callback
+        defer = Defer(self.db.ioloop)
 
         def handle_result(data, error=None):
             if error is not None:
-                callback(None, parse_error(error))
+                defer.exception(ex=parse_error(error))
             else:
                 write_capacity = {self.name: 0.0}
                 if 'ConsumedCapacityUnits' in data:
                     write_capacity[self.name] = float(data['ConsumedCapacityUnits'])
                     self._record_write_capacity(write_capacity[self.name])
 
-                callback(None, None, write_capacity=write_capacity)
+                defer.callback(None, write_capacity=write_capacity)
 
         self.db.client.make_request('PutItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def put_async(self, value, callback):
-        self._put(value, callback=callback)
+        df = self._put(value)
+
+        def handle_result(put_df):
+            callback(put_df.result)
+
+        df.add_callback(handle_result)
 
     def put_defer(self, value):
         return self._put(value)
@@ -220,7 +224,7 @@ class Table(object):
         if error:
             raise error
 
-    def _delete(self, key, callback=None):
+    def _delete(self, key):
         data = {
                 'TableName': self.name,
                }
@@ -232,14 +236,12 @@ class Table(object):
 
         data['ReturnValues'] = "ALL_OLD"
 
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(self.db.ioloop)
-            callback = defer.callback
+        defer = Defer(self.db.ioloop)
 
         def handle_result(data, error=None):
             if error is not None:
-                return callback(None, parse_error(error))
+                defer.exception(ex=parse_error(error))
+                return
 
             write_capacity = {self.name: 0.0}
             if 'ConsumedCapacityUnits' in data:
@@ -247,15 +249,20 @@ class Table(object):
                 self._record_write_capacity(write_capacity[self.name])
 
             if 'Attributes' in data:
-                callback(utils.parse_item(data['Attributes']), None, write_capacity=write_capacity)
+                defer.callback(utils.parse_item(data['Attributes']), write_capacity=write_capacity)
             else:
-                callback(None, None, write_capacity=write_capacity)
+                defer.callback(None, write_capacity=write_capacity)
 
         self.db.client.make_request('DeleteItem', body=json.dumps(data), callback=handle_result)
         return defer
 
     def delete_async(self, key, callback):
-        self._delete(key, callback=callback)
+        df = self._delete(key)
+
+        def handle_result(del_df):
+            callback(del_df.result)
+
+        df.add_callback(handle_result)
 
     def delete_defer(self, key):
         return self._delete(key)
@@ -277,7 +284,7 @@ class Table(object):
 
     delete = __delitem__
 
-    def _update(self, key, add=None, put=None, delete=None, return_value=None, callback=None):
+    def _update(self, key, add=None, put=None, delete=None, return_value=None):
         data = {
                 'TableName': self.name,
                 'ReturnValues': return_value or 'ALL_NEW',
@@ -310,14 +317,11 @@ class Table(object):
                     update[attribute]['Value'] = utils.format_value(value)
                 data['AttributeUpdates'].update(update)
 
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(ioloop=self.db.ioloop)
-            callback = defer.callback
+        defer = Defer(ioloop=self.db.ioloop)
 
         def handle_result(result, error=None):
             if error is not None:
-                callback(None, parse_error(error))
+                defer.exception(ex=parse_error(error))
                 return
 
             write_capacity = 0.0
@@ -326,9 +330,9 @@ class Table(object):
                 self._record_write_capacity(write_capacity)
 
             if 'Attributes' in result:
-                callback(utils.parse_item(result['Attributes']), None, write_capacity={self.name: write_capacity})
+                defer.callback(utils.parse_item(result['Attributes']), write_capacity={self.name: write_capacity})
             else:
-                callback(None, None, write_capacity={self.name: write_capacity})
+                defer.callback(None, write_capacity={self.name: write_capacity})
 
         self.db.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -339,9 +343,7 @@ class Table(object):
 
         d = self._update(key, add=add, put=put, delete=delete, return_value=return_value)
 
-        result, error = d(timeout=timeout)
-        if error:
-            raise error
+        result = d(timeout=timeout)
 
         return result
 
@@ -349,7 +351,12 @@ class Table(object):
         return self._update(key, add=add, put=put, delete=delete, return_value=return_value)
 
     def update_async(self, key, callback, add=None, put=None, delete=None):
-        return self._update(key, add=add, put=put, delete=delete, callback=callback)
+        df = self._update(key, add=add, put=put, delete=delete)
+
+        def handle_result(update_df):
+            callback(update_df.result)
+
+        df.add_callback(handle_result)
 
     def scan(self):
         return Scan(self)
@@ -431,7 +438,7 @@ class Batch(object):
         self._request_defer = {}
 
         # This defer tracks the over all status of this batch.
-        self._defer = ResultErrorKWDefer(ioloop=self.db.ioloop)
+        self._defer = Defer(ioloop=self.db.ioloop)
 
         self.errors = []
 
@@ -483,7 +490,7 @@ class BatchTable(object):
 
 class WriteBatch(Batch):
     def put(self, table, value):
-        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        df = Defer(ioloop=self._defer.ioloop)
         args = {'PutRequest': {"Item": utils.format_item(value)}}
 
         req_key = (table.name, "PutRequest", table._item_key(args['PutRequest']['Item']))
@@ -502,7 +509,7 @@ class WriteBatch(Batch):
         return df
 
     def delete(self, table, key):
-        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        df = Defer(ioloop=self._defer.ioloop)
         req_args = {}
         if table.has_range:
             req_args['Key'] = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
@@ -539,10 +546,10 @@ class WriteBatch(Batch):
                 log.warning("Received error for batch: %r", real_error)
 
                 for key in self._requests:
-                    self._request_defer[key].callback(None, error=real_error)
+                    self._request_defer[key].exception(ex=real_error)
 
                 self.errors.append(real_error)
-                self._defer.callback(None, error=real_error)
+                self._defer.exception(ex=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -574,7 +581,7 @@ class WriteBatch(Batch):
                                 log.warning("%r not found in %r", request, self._request_data.keys())
                                 continue
 
-                            self._request_defer[request].callback(None, error=UnprocessedItemError())
+                            self._request_defer[request].exception(ex=UnprocessedItemError())
                             unprocessed_items.add(request)
 
                 if unprocessed_items:
@@ -591,7 +598,7 @@ class WriteBatch(Batch):
 
 class ReadBatch(Batch):
     def get(self, table, key):
-        df = ResultErrorKWDefer(ioloop=self._defer.ioloop)
+        df = Defer(ioloop=self._defer.ioloop)
         if table.has_range:
             req_key = utils.format_key(('HashKeyElement', 'RangeKeyElement'), key)
         else:
@@ -628,9 +635,9 @@ class ReadBatch(Batch):
                 log.error("Received error for batch: %r", real_error)
 
                 for request in self._requests:
-                    self._request_defer[request].callback(None, error=real_error)
+                    self._request_defer[request].exception(ex=real_error)
 
-                self._defer.callback(None, error=real_error)
+                self._defer.exception(ex=real_error)
             else:
                 log.debug("Received successful result from batch: %r", data)
 
@@ -648,7 +655,7 @@ class ReadBatch(Batch):
                                 continue
 
                             assert request in self._request_data
-                            self._request_defer[request].callback(None, error=UnprocessedItemError())
+                            self._request_defer[request].exception(ex=UnprocessedItemError())
                             unprocessed_keys.add(request)
 
                 if unprocessed_keys:
@@ -672,7 +679,7 @@ class ReadBatch(Batch):
                 # Look for any items we didn't get results for.
                 for req, df in self._request_defer.iteritems():
                     if not df.done:
-                        self._request_defer[req].callback(None, error=ItemNotFoundError())
+                        self._request_defer[req].exception(ex=ItemNotFoundError())
 
                 self._defer.callback(data, read_capacity=read_capacity)
 
@@ -690,7 +697,6 @@ class Scan(object):
         scan = copy.copy(self)
         scan.args['Limit'] = limit
         return scan
-
 
     def _filter(self, name, value, compare):
         scan = copy.copy(self)
@@ -710,21 +716,18 @@ class Scan(object):
     def filter_gt(self, name, value):
         return self._filter(name, value, "GT")
 
-    def _scan(self, callback=None):
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(self.table.db.ioloop)
-            callback = defer.callback
+    def _scan(self):
+        defer = Defer(self.table.db.ioloop)
 
         def handle_result(data, error=None):
             if error is not None:
-                callback(None, parse_error(error))
+                defer.exception(ex=parse_error(error))
                 return
 
             if 'ConsumedCapacityUnits' in data:
                 self.table._record_read_capacity(float(data['ConsumedCapacityUnits']))
 
-            callback(ScanResults(self, data), None)
+            defer.callback(ScanResults(self, data))
 
         self.table.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
         return defer
@@ -744,7 +747,12 @@ class Scan(object):
         return self._scan()
 
     def async(self, callback=None):
-        self._scan(callback=callback)
+        df = self._scan()
+
+        def handle_result(scan_df):
+            callback(scan_df.result)
+
+        df.add_callback(handle_result)
 
 
 class Query(object):
@@ -801,11 +809,8 @@ class Query(object):
         query.args['ExclusiveStartKey'] = {'HashKeyElement': self.args['HashKeyValue'], 'RangeKeyElement': utils.format_value(range_id)}
         return query
 
-    def _query(self, callback=None):
-        defer = None
-        if callback is None:
-            defer = ResultErrorTupleDefer(self.table.db.ioloop)
-            callback = defer.callback
+    def _query(self):
+        defer = Defer(self.table.db.ioloop)
 
         def handle_result(result_data, error=None):
             results = None
@@ -813,9 +818,10 @@ class Query(object):
                 if 'ConsumedCapacityUnits' in result_data:
                     self.table._record_read_capacity(float(result_data['ConsumedCapacityUnits']))
 
-                results = QueryResults(self, result_data)
+                defer.callback(QueryResults(self, result_data))
+
             else:
-                error = parse_error(error)
+                defer.exception(ex=parse_error(error))
 
             return callback(results, error)
 
@@ -839,6 +845,10 @@ class Query(object):
     def async(self, callback=None):
         self._query(callback=callback)
 
+        def handle_result(q_df):
+            callback(q_df.result)
+
+        df.add_callback(handle_result)
 
 
 class Results(object):
