@@ -8,6 +8,7 @@ Some of this is inspired by Twisted, but they are pretty different.
 """
 import functools
 import time
+import sys
 
 from .errors import Error
 
@@ -22,19 +23,18 @@ class Defer(object):
         self.kwargs = None
         self._timeout_req = None
         self._callbacks = []
+        self._exception = None
 
     def add_callback(self, cb):
         self._callbacks.append(cb)
         if self.done:
             cb(self)
 
-    def callback(self, *args, **kwargs):
+    def _do_done(self):
         if self.done:
             raise ValueError("Already called")
 
         self.done = True
-        self.args = args
-        self.kwargs = kwargs
 
         if self._timeout_req:
             self.ioloop.remove_timeout(self._timeout_req)
@@ -45,6 +45,29 @@ class Defer(object):
 
         for c in self._callbacks:
             c(self)
+
+    def callback(self, *args, **kwargs):
+        """Handle result (defer is now complete"""
+        self.args = args
+        self.kwargs = kwargs
+
+        self._do_done()
+
+    def exception(self, ex_type=None, ex=None, tb=None):
+        """Handle error result (defer is now complete
+        
+        Caller can pass in exception info, or if inside a try/except block, we
+        can pull it from sys.exc_info()
+        """
+        if ex is None:
+            ex_type, ex, tb = sys.exc_info()
+
+        if ex and not ex_type:
+            ex_type = type(ex)
+
+        self._exception = (ex_type, ex, tb)
+
+        self._do_done()
 
     def __call__(self, timeout=None):
         if not self.done and not self.ioloop:
@@ -60,9 +83,26 @@ class Defer(object):
         assert self.done
         return self.result
 
+    def rethrow(self):
+        if self._exception:
+            ex_type, ex, tb = self._exception
+            raise ex_type, ex, tb
+
+    @property
+    def error(self):
+        if self._exception:
+            return self._exception[1]
+
+        return None
+
     @property
     def result(self):
-        return self.args, self.kwargs
+        self.rethrow()
+
+        if len(self.args) == 1 and not self.kwargs:
+            return self.args[0]
+        else:
+            return self.args, self.kwargs
 
 
 class ResultErrorTupleDefer(Defer):
