@@ -277,10 +277,10 @@ class Table(object):
 
     delete = __delitem__
 
-    def _update(self, key, add=None, put=None, delete=None, callback=None):
+    def _update(self, key, add=None, put=None, delete=None, return_value=None, callback=None):
         data = {
                 'TableName': self.name,
-                'ReturnValues': 'ALL_NEW',
+                'ReturnValues': return_value or 'ALL_NEW',
                }
 
         if self.has_range:
@@ -333,11 +333,11 @@ class Table(object):
         self.db.client.make_request('UpdateItem', body=json.dumps(data), callback=handle_result)
         return defer
 
-    def update(self, key, add=None, put=None, delete=None, timeout=None):
+    def update(self, key, add=None, put=None, delete=None, return_value=None, timeout=None):
         if not self.db.allow_sync:
             raise SyncUnallowedError()
 
-        d = self._update(key, add=add, put=put, delete=delete)
+        d = self._update(key, add=add, put=put, delete=delete, return_value=return_value)
 
         result, error = d(timeout=timeout)
         if error:
@@ -345,8 +345,8 @@ class Table(object):
 
         return result
 
-    def update_defer(self, key, add=None, put=None, delete=None, timeout=None):
-        return self._update(key, add=add, put=put, delete=delete)
+    def update_defer(self, key, add=None, put=None, delete=None, return_value=None, timeout=None):
+        return self._update(key, add=add, put=put, delete=delete, return_value=return_value)
 
     def update_async(self, key, callback, add=None, put=None, delete=None):
         return self._update(key, add=add, put=put, delete=delete, callback=callback)

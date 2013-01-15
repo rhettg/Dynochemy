@@ -152,10 +152,45 @@ class UpdateOperation(Operation):
         return new_update
 
     def run_defer(self, op_results):
-        update_df = getattr(op_results.db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete)
+        update_df = getattr(op_results.db, self.table.__name__).update_defer(self.key, add=self.add, put=self.put, delete=self.delete, return_value="ALL_OLD")
         update_df.add_callback(functools.partial(self.have_result, op_results))
 
         return update_df
+
+    def result(self, old_result):
+        """Return what we think the result of this operation will be, given the old entity.
+
+        This is useful because we typically retrieve the old value from the db
+        so we can properly understand the changes that took place.  We can't
+        just get the new value from the db, because sometimes views need to
+        know what changed (for example, counters)
+        """
+        new_item = copy.copy(old_result)
+
+        if self.put:
+            for attribute, value in self.put.iteritems():
+                new_item[attribute] = value
+
+        if self.add:
+            for attribute, value in self.add.iteritems():
+                if attribute in new_item:
+                    if isinstance(new_item[attribute], (int, float)):
+                        new_item[attribute] += value
+                    elif isinstance(new_item[attribute], list):
+                        if hasattr(value, '__iter__'):
+                            new_item[attribute] += [v for v in value]
+                        else:
+                            new_item[attribute].append(value)
+                    else:
+                        new_item[attribute].append(value)
+                else:
+                    new_item[attribute] = value
+
+        if self.delete:
+            for attribute, value in self.delete.iteritems():
+                del new_item[attribute]
+
+        return new_item
 
     @property
     def unique_key(self):
