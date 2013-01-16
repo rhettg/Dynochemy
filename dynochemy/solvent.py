@@ -94,7 +94,9 @@ class Solvent(object):
     def run_async(self, db, callback=None):
         def handle_result(cb):
             if callback is not None:
-                callback(*cb.result)
+                result = cb.result
+                callback(result)
+
         df = self.run_defer(db)
         df.add_callback(handle_result)
 
