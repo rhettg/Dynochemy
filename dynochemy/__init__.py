@@ -20,6 +20,7 @@ __copyright__ = 'Copyright 2012 Rhett Garber'
 
 
 from . import utils
+from .defer import Defer
 from .db import DB
 from .db import Table
 from .db import run_all
