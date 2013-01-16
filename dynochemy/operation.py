@@ -30,6 +30,21 @@ from . import constants
 
 log = logging.getLogger(__name__)
 
+def operation_clone_defer(df):
+    """Defer's come from the db with extra parameters. We want to clean those up."""
+    new_df = defer.Defer()
+    if df.error:
+        # Copy over the error. Might be more efficient ways of doing this.
+        try:
+            new_df.result
+        except Exception:
+            new_df.exception()
+        else:
+            assert False, "Should have an exception"
+    else:
+        new_df.callback(df.args[0])
+
+    return new_df
 
 class Operation(object):
     """(Abstract)Base class for all operations.
@@ -64,10 +79,8 @@ class Operation(object):
         # it will deliver it's results through.
 
         df = self.run_defer(op_results)
-        result, err = df()
-        if err:
-            raise err
-        return result
+
+        return df()
 
     def run_async(self, op_results, callback=None):
         df = self.run_defer(op_results)
@@ -78,7 +91,7 @@ class Operation(object):
 
         df.add_callback(handle_result)
 
-    def have_result(self, op_results, op_cb, ignore_capacity=False):
+    def have_result(self, op_results, db_df, ignore_capacity=False):
         """Called when a result for this operation is available.
 
         Args -
@@ -88,13 +101,20 @@ class Operation(object):
 
         This gives an operation the chance to intercept the processing of results, and potentially queue 'next operations'.
         """
+
+        # Operations come from the database with args and keywords that include
+        # capacity. We want to strip that out so our results can be used nice
+        # and cleanly with a single return value
+        assert db_df.done
+        op_df = operation_clone_defer(db_df)
+        
         if ignore_capacity:
-            op_results.record_result(self, op_cb)
+            op_results.record_result(self, op_df)
         else:
             op_results.record_result(self, 
-                             op_cb, 
-                             read_capacity=op_cb.kwargs.get('read_capacity'), 
-                             write_capacity=op_cb.kwargs.get('write_capacity'))
+                             op_df, 
+                             read_capacity=db_df.kwargs.get('read_capacity'), 
+                             write_capacity=db_df.kwargs.get('write_capacity'))
 
 
 def combine_dicts(left_dict, right_dict, combiner=None):
@@ -428,8 +448,14 @@ class GetAndDeleteOperation(GetOperation):
     def have_result(self, op_results, op_cb):
         super(GetAndDeleteOperation, self).have_result(op_results, op_cb)
 
-        entity, err = op_results[self]
-        if not err:
+        try:
+            entity = op_results[self]
+        except Exception:
+            pass
+        else:
+            entity = None
+
+        if entity:
             op_results.next_ops.append(DeleteOperation(self.table, self.key))
 
     def __repr__(self):
@@ -486,7 +512,7 @@ class QueryOperation(Operation):
         # want all the different segments of our query to combine together.
         return ('QUERY', self.table.name, self.hash_key, tuple((k, v) for k, v in self.args.iteritems() if k not in ('last_seen', 'limit')), self.total_limit)
 
-    def have_result(self, op_results, op_cb, **kwargs):
+    def have_result(self, op_results, db_df, **kwargs):
         # Query result handling is special.
         # Queries can happen in multiple operations.
         # We need to potentially update our resulting QueryResult object with new entries in place.
@@ -497,8 +523,10 @@ class QueryOperation(Operation):
         # the old result object, but updating with a new error. Later on, when checking for errors to retry, we ignore the results, just 
         # looking for errors.
 
+        op_df = operation_clone_defer(db_df)
+
         try:
-            new_query_result = op_cb.result
+            new_query_result = op_df.result
             new_err = None
         except Exception, e:
             new_err = e
@@ -512,13 +540,14 @@ class QueryOperation(Operation):
                 op_results.set_raw_error(self, new_err)
             else:
                 op_results.set_raw_result(self, old_query_result.combine(new_query_result))
-                op_results.update_read_capacity(op_cb.kwargs.get('read_capacity'))
+                if 'read_capacity' in db_df.kwargs:
+                    op_results.update_read_capacity(db_df.kwargs['read_capacity'])
         else:
-            super(QueryOperation, self).have_result(op_results, op_cb)
+            super(QueryOperation, self).have_result(op_results, db_df)
 
         if self.total_limit:
             # Let's make sure we never return more entities than our limit
-            full_res, err = op_results[self]
+            full_res = op_results[self]
             if full_res:
                 assert len(full_res) <= self.total_limit
 
@@ -577,9 +606,14 @@ class QueryAndDeleteOperation(QueryOperation):
 
         filter_func = self.filter_func or (lambda e: True)
 
-        query_result, new_err = op_cb.result
-        for res in filter(filter_func, query_result):
-            op_results.next_ops.append(DeleteOperation(self.table, (res[self.table.hash_key], res[self.table.range_key])))
+        try:
+            query_result = op_cb.result
+        except Exception:
+            # Nothing to be done
+            pass
+        else:
+            for res in filter(filter_func, query_result):
+                op_results.next_ops.append(DeleteOperation(self.table, (res[self.table.hash_key], res[self.table.range_key])))
 
     def __repr__(self):
         return "<QueryAndDeleteOperation %s:%r>" % (self.table.name, self.hash_key,)

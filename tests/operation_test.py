@@ -44,7 +44,7 @@ class SimplePutTestCase(OperationTestCase):
 
     def test(self):
         self.op.run(self.results)
-        assert self.results[self.op]
+        self.results[self.op]
 
         entity = self.db.TestTable.get("hello")
         assert entity
@@ -130,7 +130,7 @@ class UpdateTestCase(OperationTestCase):
 
         entity = self.db.TestTable.get("hello")
         assert_equal(entity['count'], 2)
-        assert_equal(self.results[self.op][0]['count'], 2)
+        assert_equal(self.results[self.op]['count'], 2)
 
 
 class CombineUpdateTestCase(OperationTestCase):
@@ -149,8 +149,7 @@ class CombineUpdateTestCase(OperationTestCase):
         assert_equal(entity['my_name'], 'slim shady')
         assert_equal(entity['count'], 3)
 
-        val, err = self.results[op]
-        assert not err
+        val = self.results[op]
 
 
 class UpdateCombineTestCase(OperationTestCase):
@@ -187,8 +186,7 @@ class GetTestCase(OperationTestCase):
     def test(self):
         self.op.run(self.result)
 
-        entity, err = self.result[self.op]
-        assert not err
+        entity = self.result[self.op]
 
         assert_equal(entity['count'], 1)
 
@@ -216,13 +214,10 @@ class MultiGetTestCase(OperationTestCase):
         result = self.batch_op.run(self.result)
 
         op_1, op_2 = self.ops
-        entity, err = self.result[op_1]
-        if err:
-            raise err
+        entity = self.result[op_1]
         assert_equal(entity['count'], 1)
 
-        entity, err = self.result[op_2]
-        assert not err
+        entity = self.result[op_2]
         assert_equal(entity['count'], 10)
 
 
@@ -261,8 +256,7 @@ class MultiBatchReadTestCase(OperationTestCase):
         next_batch.run(self.result)
 
         for key, op in zip(self.keys, self.ops):
-            val, err = self.result[op]
-            assert not err
+            val = self.result[op]
             assert_equal(val['key'], key)
 
         assert_equal(self.result.read_capacity[self.db.TestTable.name], 4.0)
@@ -297,9 +291,7 @@ class QueryOperationTestCase(OperationTestCase):
 
         self.op.run(self.results)
 
-        query_result, err = self.results[self.op]
-        if err:
-            raise err
+        query_result = self.results[self.op]
 
         # We should only have 2, because that's our DEFAULT_LIMIT
         entities = list(query_result)
@@ -310,9 +302,7 @@ class QueryOperationTestCase(OperationTestCase):
         next_op = self.results.next_ops.pop()
         next_op.run(self.results)
 
-        query_result, err = self.results[self.op]
-        if err:
-            raise err
+        query_result = self.results[self.op]
 
         entities = list(query_result)
         assert_equal(len(entities), 3)

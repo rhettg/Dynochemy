@@ -136,7 +136,7 @@ class Table(object):
             if 'Item' in data:
                 defer.callback(utils.parse_item(data['Item']), read_capacity=read_capacity)
             else:
-                defer.callback(None)
+                defer.callback(None, read_capacity=read_capacity)
 
         self.db.client.make_request('GetItem', body=json.dumps(data), callback=handle_result)
         return defer
@@ -158,14 +158,12 @@ class Table(object):
 
         d = self._get(key)
 
-        item, error =  d()
-        if error:
-            raise error
+        args, kwargs = d()
 
-        if item is None:
+        if not args or args[0] is None:
             raise KeyError(key)
 
-        return item
+        return args[0]
 
     get = __getitem__
 
@@ -220,9 +218,8 @@ class Table(object):
 
         d = self._put(value)
 
-        result, error = d(timeout=timeout)
-        if error:
-            raise error
+        args, kwargs = d(timeout=timeout)
+        return args and args[0]
 
     def _delete(self, key):
         data = {
@@ -273,14 +270,12 @@ class Table(object):
 
         d = self._delete(key)
 
-        item, error =  d()
-        if error:
-            raise error
+        args, kwargs =  d()
 
-        if item is None:
+        if not args or args[0] is None:
             raise KeyError(key)
 
-        return item
+        return args[0]
 
     delete = __delitem__
 
@@ -343,9 +338,9 @@ class Table(object):
 
         d = self._update(key, add=add, put=put, delete=delete, return_value=return_value)
 
-        result = d(timeout=timeout)
+        args, kwargs = d(timeout=timeout)
 
-        return result
+        return args[0]
 
     def update_defer(self, key, add=None, put=None, delete=None, return_value=None, timeout=None):
         return self._update(key, add=add, put=put, delete=delete, return_value=return_value)
@@ -452,10 +447,8 @@ class Batch(object):
     def __call__(self, timeout=None):
         self._run_batch()
 
-        result, error = self._defer()
-        if error:
-            raise error
-        return result
+        args, kwargs = self._defer(timeout=timeout)
+        return args[0]
 
     def async(self, callback=None):
         if callback:
@@ -737,11 +730,8 @@ class Scan(object):
             raise SyncUnallowedError()
 
         d = self._scan()
-        data, error = d(timeout=timeout)
-        if error:
-            raise error
-
-        return data
+        args, kwargs = d(timeout=timeout)
+        return args[0]
 
     def defer(self):
         return self._scan()
@@ -819,11 +809,8 @@ class Query(object):
                     self.table._record_read_capacity(float(result_data['ConsumedCapacityUnits']))
 
                 defer.callback(QueryResults(self, result_data))
-
             else:
                 defer.exception(ex=parse_error(error))
-
-            return callback(results, error)
 
         self.table.db.client.make_request('Query', body=json.dumps(self.args), callback=handle_result)
         return defer
@@ -833,11 +820,8 @@ class Query(object):
             raise SyncUnallowedError()
 
         d = self._query()
-        results, error = d(timeout=timeout)
-        if error:
-            raise error
-
-        return results
+        args, kwargs =  d(timeout=timeout)
+        return args[0]
 
     def defer(self):
         return self._query()
