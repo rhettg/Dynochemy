@@ -10,7 +10,7 @@ Dynochemy
 """
 
 __title__ = 'dynochemy'
-__version__ = '0.0.5'
+__version__ = '0.1.0'
 __description__ = 'Clever pythonic and async interface to Amazon DynamoDB '
 __url__ = 'https://github.com/rhettg/dynochemy'
 __build__ = 0
