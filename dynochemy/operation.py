@@ -451,8 +451,6 @@ class GetAndDeleteOperation(GetOperation):
         try:
             entity = op_results[self]
         except Exception:
-            pass
-        else:
             entity = None
 
         if entity:
