@@ -114,7 +114,7 @@ Example:
 
     result = s.run(db)
 
-    entity, err = result[get_op_1]
+    entity = result[get_op_1]
     print entity
 
 This example will run simulataneously, a BatchWrite and a BatchGetItem request. If
