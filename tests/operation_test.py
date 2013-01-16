@@ -130,7 +130,7 @@ class UpdateTestCase(OperationTestCase):
 
         entity = self.db.TestTable.get("hello")
         assert_equal(entity['count'], 2)
-        assert_equal(self.results[self.op]['count'], 2)
+        assert_equal(self.op.result(self.results[self.op])['count'], 2)
 
 
 class CombineUpdateTestCase(OperationTestCase):
