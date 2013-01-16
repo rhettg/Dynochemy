@@ -99,7 +99,7 @@ class Defer(object):
     def result(self):
         self.rethrow()
 
-        if len(self.args) == 1 and not self.kwargs:
+        if self.args and len(self.args) == 1 and not self.kwargs:
             return self.args[0]
         else:
             return self.args, self.kwargs

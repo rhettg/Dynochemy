@@ -717,10 +717,12 @@ class Scan(object):
                 defer.exception(ex=parse_error(error))
                 return
 
+            read_capacity = 0.0
             if 'ConsumedCapacityUnits' in data:
-                self.table._record_read_capacity(float(data['ConsumedCapacityUnits']))
+                read_capacity = float(data['ConsumedCapacityUnits'])
+                self.table._record_read_capacity(read_capacity)
 
-            defer.callback(ScanResults(self, data))
+            defer.callback(ScanResults(self, data), read_capacity=read_capacity)
 
         self.table.db.client.make_request('Scan', body=json.dumps(self.args), callback=handle_result)
         return defer

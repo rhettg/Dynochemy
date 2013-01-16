@@ -88,9 +88,7 @@ class Solvent(object):
 
     def run(self, db):
         df = self.run_defer(db)
-        result, err = df()
-        if err:
-            raise err
+        result = df()
         return result
 
     def run_async(self, db, callback=None):
@@ -127,9 +125,9 @@ class SolventRun(object):
         return self.defer
 
     def handle_result(self, op):
-        result, err = self.op_results[op]
-        if err:
-            # Not going to do anything with errors
+        try:
+            result = self.op_results[op]
+        except Exception:
             return
 
         if op.noindex:

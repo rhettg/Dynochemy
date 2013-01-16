@@ -36,7 +36,7 @@ def operation_clone_defer(df):
     if df.error:
         # Copy over the error. Might be more efficient ways of doing this.
         try:
-            new_df.result
+            df.rethrow()
         except Exception:
             new_df.exception()
         else:
@@ -108,7 +108,7 @@ class Operation(object):
         assert db_df.done
         op_df = operation_clone_defer(db_df)
         
-        if ignore_capacity:
+        if ignore_capacity or db_df.kwargs is None:
             op_results.record_result(self, op_df)
         else:
             op_results.record_result(self, 

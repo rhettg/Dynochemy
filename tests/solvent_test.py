@@ -35,9 +35,7 @@ class SimpleSolventTestCase(SolventTestCase):
         put_op = solvent.put(TestTable, {'key': 'hello', 'value': 10.0})
         result = solvent.run(self.db)
         
-        ret, err = result[put_op]
-        if err:
-            raise err
+        ret = result[put_op]
 
         assert self.db.TestTable.get('hello')['value'] == 10
 
@@ -52,9 +50,7 @@ class GetSolventTestCase(SolventTestCase):
         get_op = solvent.get(TestTable, 'hello')
         result = solvent.run(self.db)
         
-        ret, err = result[get_op]
-        if err:
-            raise err
+        ret = result[get_op]
 
         assert_equal(ret['value'], 25)
 
@@ -84,8 +80,7 @@ class SolventCapacityTestCase(TestCase):
 
         result = solvent.run(self.db)
         for op in [put_op_1, put_op_2, put_op_3]:
-            _, err = result[op]
-            assert not err, err
+            result[op]
 
         solvent = Solvent()
         get_op_1 = solvent.get(self.LimitedTestTable, 'hello')
@@ -94,8 +89,7 @@ class SolventCapacityTestCase(TestCase):
 
         result = solvent.run(self.db)
         for op in [get_op_1, get_op_2, get_op_3]:
-            entity, err = result[op]
-            assert not err, err
+            entity = result[op]
             assert entity['key']
 
 
@@ -226,9 +220,7 @@ class SolventQueryTestCase(SolventTestCase):
 
         result = s.run(self.db)
 
-        query_result, err = result[q_op]
-        if err:
-            raise err
+        query_result = result[q_op]
 
         entities = list(query_result)
         assert_equal(len(entities), 3)
